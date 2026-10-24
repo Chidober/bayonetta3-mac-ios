@@ -1,0 +1,178 @@
+#!/bin/zsh
+# B3 移植命令行：导入游戏文件 → 改写模块 → 收集着色器 → 生成着色器缓存 → 在 Mac 上运行 / 打包 iOS 应用。
+# ./b3 play [游戏目录] 与 ./b3 ios 会自动补齐缺的步骤（一键游玩）；各步骤也可单独运行。
+# 所有生成物都在仓库外的工作目录（缺省 ~/b3-work，可用 B3_WORK 改）；游戏文件只读不改。用法见 README.md 或 ./b3 help。
+# B3 port command line: import game files → rewrite modules → collect shaders → build the shader cache → run on the Mac / package the iOS app.
+# ./b3 play [game dir] and ./b3 ios fill in any missing steps automatically (one-click play); each step can also be run on its own.
+# All outputs live in a work directory outside the repository (default ~/b3-work, override with B3_WORK); game files are read only. Usage: README.md or ./b3 help.
+set -e
+ROOT=${0:A:h}
+WORK=${B3_WORK:-$HOME/b3-work}
+B3=$ROOT/dm/b3
+PY=$WORK/venv/bin/python
+KNOWN_BUILD=4104f9c7041985f4d2e30ed06cc82886   # 已验证的游戏版本（1.0.0，无更新）的 main 构建号前 16 字节 | main build ID (first 16 bytes) of the verified game version (1.0.0, no update)
+CHAIN=$(head -1 $B3/shader/CHAIN | awk '{print $1}')
+
+say() { print -P "%F{cyan}==>%f $*"; }
+die() { print -P "%F{red}错误 | error:%f $*" >&2; exit 1; }
+need_input() { [ -d $WORK/input/ExeFS ] && [ -d $WORK/input/RomFS ] || die "还没导入游戏文件，先运行 ./b3 import <目录> | import game files first: ./b3 import <dir>"; }
+need_boot() { [ -f $WORK/boot/main.patched.bin ] || die "模块还没改写，先运行 ./b3 boot | modules not rewritten yet, run ./b3 boot"; }
+build_host() { make -C $B3 -j8 build/b3host >/dev/null 2>&1 || { make -C $B3 build/b3host 2>&1 | grep -E 'error' | head; die "宿主编译失败 | host build failed"; }; }
+program_id() { $PY -c "
+import struct,sys;d=open(sys.argv[1],'rb').read();o,s=struct.unpack_from('<II',d,0x70);print('%016x'%struct.unpack_from('<Q',d,o+0x10)[0])" $WORK/input/ExeFS/main.npdm; }
+
+# ---------- 自动补齐（一键游玩）| fill in missing steps (one-click play) ----------
+ensure_setup() { [ -x $PY ] && $PY -c 'import lz4, capstone' 2>/dev/null && command -v dotnet >/dev/null && command -v spirv-cross >/dev/null && command -v xcodegen >/dev/null || cmd_setup; }
+ensure_input() {
+    if [ -n "$1" ]; then cmd_import "$1"; return; fi
+    [ -d $WORK/input/ExeFS ] && [ -d $WORK/input/RomFS ] && return
+    say "选择游戏文件目录（里面要有 ExeFS 和 RomFS）| choose the game files folder (containing ExeFS and RomFS)"
+    local d=$(osascript -e 'POSIX path of (choose folder with prompt "选择《猎天使魔女3》游戏文件目录（含 ExeFS 与 RomFS）| Choose the Bayonetta 3 game files folder (with ExeFS and RomFS)")' 2>/dev/null) || true
+    [ -n "$d" ] || die "没有选择目录；也可以运行 ./b3 play <目录> | no folder chosen; you can also run ./b3 play <dir>"
+    cmd_import "${d%/}"
+}
+ensure_boot() {
+    local want="$(shasum -a 256 $WORK/input/ExeFS/main $ROOT/dm/tools/patch_nso.py | awk '{print $1}' | tr -d '\n')"
+    [ -f $WORK/boot/main.patched.bin ] && [ "$(cat $WORK/boot/.stamp 2>/dev/null)" = "$want" ] && return
+    cmd_boot; print -n "$want" > $WORK/boot/.stamp
+}
+ctl_count() { ls $WORK/shader_dump 2>/dev/null | grep -c '\.ctl$' || true; }
+ensure_collect() {
+    [ "$(ctl_count)" -gt 0 ] && return
+    say "第一次运行：后台启动游戏收集着色器（约 1–2 分钟，不开窗口）| first run: starting the game in the background to collect shaders (about 1-2 minutes, no window)"
+    mkdir -p $WORK/logs $WORK/save $WORK/shader_dump; build_host
+    local log=$WORK/logs/collect_$(date +%Y%m%d_%H%M%S).log
+    ( cd $WORK/boot && DM_B3_LENIENT=1 B3_MUTE=1 B3_INPUT=$WORK/input B3_PROGRAM_ID=$(program_id) B3_SAVE_DIR=$WORK/save B3_SHADER_DUMP=$WORK/shader_dump B3_CAPTURE_FRAMES=0 \
+        exec $B3/build/b3host . main subsdk0 sdk > $log 2>&1 ) &
+    local pid=$! last=-1 same=0 t=0 n
+    while kill -0 $pid 2>/dev/null && [ $t -lt 300 ]; do
+        sleep 5; t=$((t + 5)); n=$(ctl_count)
+        if [ $n -gt 1000 ] && [ $n -eq $last ]; then same=$((same + 5)); else same=0; fi; last=$n
+        [ $same -ge 30 ] && break
+        print -n "\r  已收集 | collected: $n"
+    done
+    kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true; print
+    [ "$(ctl_count)" -gt 0 ] || die "没收集到着色器，看日志 $log | no shaders collected, see $log"
+    say "收集到 $(ctl_count) 个着色器 | collected $(ctl_count) shaders"
+}
+ensure_shaders() {   # $1 = macosx | iphoneos
+    # 新着色器 → 重编；玩过 3 局以上（日志里攒了更多顶点 / 贴图格式事实）→ 增量重编一次（约 2 分钟）| new shaders → rebuild; 3+ sessions played since (more vertex / texture format facts in the logs) → one incremental rebuild (about 2 minutes)
+    local dir=$WORK/shader_cache/b-$CHAIN; [ "$1" = iphoneos ] && dir=$dir-ios
+    local n=$(ctl_count) logs=$(ls $WORK/logs 2>/dev/null | wc -l | tr -d ' ') st=(${(s:/:)"$(cat $dir/.built 2>/dev/null)"})
+    [ -d $dir ] && [ "$st[1]" = "$n" ] && [ $((logs - ${st[2]:-0})) -lt 3 ] && return
+    cmd_shaders $([ "$1" = iphoneos ] && echo --ios); print -n "$n/$logs" > $dir/.built
+}
+
+cmd_help() {
+cat <<'EOF'
+用法 | usage: ./b3 <命令 | command>
+  setup                      检查并安装依赖（Xcode、Homebrew 包、Python 环境）| check and install dependencies
+  import <目录 | dir>        导入游戏文件：目录里要有 ExeFS/ 和 RomFS/ | import game files: the directory must contain ExeFS/ and RomFS/
+  boot                       编译宿主并改写游戏模块 | build the host and rewrite the game modules
+  play [游戏目录 | game dir]  一键在 Mac 上玩：缺什么步骤自动补齐 | one-click play on the Mac: missing steps run automatically
+  collect [游戏目录 | dir]    只做准备到收集着色器为止 | prepare up to shader collection only
+  shaders [--ios]            把收集到的着色器编成缓存（--ios：手机版）| build the shader cache from collected shaders (--ios: for iPhone)
+  ios [--team T] [--device UDID] [--bundle ID] [--no-data]
+                             一键装到 iPhone：自动补齐步骤、自动找签名团队和连着的手机 | one-click iPhone install: fills in steps, finds the team and the connected phone
+  status                     查看当前进度 | show progress
+EOF
+}
+
+cmd_setup() {
+    xcrun --find metal >/dev/null 2>&1 || die "需要完整的 Xcode（含 Metal 工具链），装好后运行 sudo xcode-select -s /Applications/Xcode.app | full Xcode with the Metal toolchain is required"
+    command -v brew >/dev/null || die "需要 Homebrew：https://brew.sh | Homebrew is required"
+    for p in dotnet spirv-cross xcodegen; do command -v $p >/dev/null || { say "安装 $p | installing $p"; brew install $p; }; done
+    if [ ! -x $PY ] || ! $PY -c 'import lz4, capstone' 2>/dev/null; then
+        say "建 Python 环境 | creating the Python environment"; mkdir -p $WORK; /usr/bin/python3 -m venv $WORK/venv; $PY -m pip install -q lz4 capstone
+    fi
+    say "依赖就绪 | dependencies ready"
+}
+
+cmd_import() {
+    local src=${1:?用法 ./b3 import <目录> | usage: ./b3 import <dir>}; src=${src:A}
+    for f in ExeFS/main ExeFS/main.npdm ExeFS/sdk ExeFS/subsdk0; do [ -f $src/$f ] || die "$src 里缺 $f | missing $f in $src"; done
+    [ -d $src/RomFS ] || die "$src 里缺 RomFS/ | missing RomFS/ in $src"
+    local bid=$(/usr/bin/python3 -c "import sys;print(open(sys.argv[1],'rb').read()[0x40:0x50].hex())" $src/ExeFS/main)
+    [ "$bid" = "$KNOWN_BUILD" ] || print -P "%F{yellow}警告 | warning:%f main 构建号 $bid 不是验证过的版本（1.0.0），可能跑不起来 | main build ID is not the verified version (1.0.0) and may not run"
+    mkdir -p $WORK; rm -f $WORK/input; ln -s $src $WORK/input
+    say "已导入 $src（只读引用，不复制）| imported $src (referenced read-only, not copied)"
+}
+
+cmd_boot() {
+    need_input; [ -x $PY ] || die "先运行 ./b3 setup | run ./b3 setup first"
+    say "编译宿主 | building the host"; build_host
+    mkdir -p $WORK/boot
+    for m in main subsdk0 sdk; do
+        say "改写 $m | rewriting $m"; $PY $ROOT/dm/tools/patch_nso.py $WORK/input/ExeFS/$m $WORK/boot $m >$WORK/boot/$m.patch.log 2>&1 || { tail -3 $WORK/boot/$m.patch.log; die "改写 $m 失败 | rewriting $m failed"; }
+    done
+    say "完成，下一步 ./b3 play | done, next: ./b3 play"
+}
+
+cmd_play() {
+    ensure_setup; ensure_input "$1"; ensure_boot; ensure_collect; ensure_shaders macosx
+    build_host
+    mkdir -p $WORK/logs $WORK/save $WORK/shader_dump $WORK/cap
+    local log=$WORK/logs/play_$(date +%Y%m%d_%H%M%S).log before=$(ctl_count)
+    say "开始游戏（关窗口结束）| starting the game (close the window to quit); 日志 | log: $log"
+    ( cd $WORK/boot && B3_WINDOW=1 DM_B3_LENIENT=1 B3_INPUT=$WORK/input B3_PROGRAM_ID=$(program_id) B3_SAVE_DIR=$WORK/save \
+      B3_SHADER_LIB=$WORK/shader_cache B3_SHADER_MAP=$WORK/shader_map.tsv B3_SHADER_DUMP=$WORK/shader_dump B3_CAPTURE_DIR=$WORK/cap B3_CAPTURE_FRAMES=0 \
+        $B3/build/b3host . main subsdk0 sdk > $log 2>&1 ) || true
+    [ "$(ctl_count)" = "$before" ] || say "这局收集到新的着色器，下次启动会自动更新缓存 | new shaders were collected this session; the cache updates automatically next launch"
+}
+
+cmd_shaders() {
+    [ -f $WORK/shader_dump/shader_map.tsv ] || die "还没收集到着色器，先运行 ./b3 play | no shaders collected yet, run ./b3 play first"
+    local sdk=macosx; [ "$1" = --ios ] && sdk=iphoneos
+    local facts=($WORK/logs/*.log(N))
+    say "生成着色器缓存（$sdk；第一次较慢，之后只编新增的）| building the shader cache ($sdk; slow the first time, incremental afterwards)"
+    B3_AIR_CACHE=$WORK/air_cache /usr/bin/python3 $B3/shader/build.py --dump $WORK/shader_dump --facts $facts \
+        --out $WORK/shader_cache --map $WORK/shader_map.tsv --xlate $WORK/build/xlate/b3_xlate --sdk $sdk -j ${B3_JOBS:-$(sysctl -n hw.ncpu)} | tail -1
+}
+
+cmd_ios() {
+    local team= dev= bundle= data=1
+    while [ $# -gt 0 ]; do case $1 in --team) team=$2; shift 2;; --device) dev=$2; shift 2;; --bundle) bundle=$2; shift 2;; --no-data) data=0; shift;; *) die "未知参数 $1 | unknown option $1";; esac; done
+    # 签名团队：缺省取 Xcode 里登录的第一个团队；设备：缺省取唯一一台连着的 iPhone | signing team: defaults to the first team signed in to Xcode; device: defaults to the only connected iPhone
+    [ -n "$team" ] || team=$(defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier 2>/dev/null | grep -m1 "teamID" | sed 's/.*= *//; s/[;" ]//g')
+    [ -n "$team" ] || die "找不到签名团队：打开 Xcode → Settings → Accounts 登录 Apple ID，或用 --team 指定 | no signing team: sign in to an Apple ID in Xcode → Settings → Accounts, or pass --team"
+    if [ -z "$dev" ]; then
+        local devs=($(xcrun devicectl list devices 2>/dev/null | grep -i "iphone" | grep "available" | grep -oE "[0-9A-F]{8}-[0-9A-F]{16}"))
+        [ ${#devs} -eq 1 ] || die "需要正好一台连着并解锁的 iPhone（现在 ${#devs} 台），或用 --device 指定 | exactly one connected, unlocked iPhone is needed (found ${#devs}), or pass --device"
+        dev=$devs[1]
+    fi
+    [ -n "$bundle" ] || bundle=com.b3port.${(L)team}
+    say "签名团队 | team: $team，设备 | device: $dev，包名 | bundle: $bundle"
+    ensure_setup; ensure_input; ensure_boot; ensure_collect; ensure_shaders iphoneos
+    say "打包并安装 | packaging and installing"
+    B3_TEAM=$team B3_BUNDLE=$bundle B3_BOOT=$WORK/boot B3_IOS_WORK=$WORK/ios $B3/ios/build_ios.sh install $dev
+    [ $data = 1 ] || return 0
+    local C=(--device $dev --domain-type appDataContainer --domain-identifier $bundle)
+    local have=$(xcrun devicectl device info files $C --subdirectory Documents/input/RomFS 2>/dev/null | grep -c "Readable" || true)
+    local want=$(ls $WORK/input/RomFS | wc -l | tr -d ' ')
+    if [ "$have" -lt "$want" ]; then
+        say "推送游戏数据（约 15 GB，数据线几分钟）| pushing game data (about 15 GB, a few minutes over a cable)"
+        xcrun devicectl device copy to $C --source $WORK/input/ExeFS --destination Documents/input/ExeFS >/dev/null
+        xcrun devicectl device copy to $C --source $WORK/input/RomFS --destination Documents/input/RomFS >/dev/null
+    fi
+    say "推送着色器 | pushing shaders"
+    xcrun devicectl device copy to $C --source $WORK/shader_cache/b-$CHAIN-ios --destination Documents/shader_cache/b-$CHAIN >/dev/null
+    xcrun devicectl device copy to $C --source $WORK/shader_map.tsv --destination Documents/shader_map.tsv >/dev/null
+    if ! xcrun devicectl device info files $C --subdirectory Documents 2>/dev/null | grep -q "^save "; then
+        mkdir -p $WORK/save; xcrun devicectl device copy to $C --source $WORK/save --destination Documents/save >/dev/null
+    fi
+    say "完成：在手机上打开应用（第一次要在 设置 → 通用 → VPN与设备管理 里信任开发者）| done: open the app on the phone (the first time, trust the developer in Settings → General → VPN & Device Management)"
+}
+
+cmd_status() {
+    print "游戏文件 | game files:   $([ -e $WORK/input ] && readlink $WORK/input || echo 未导入 / not imported)"
+    print "改写模块 | modules:      $([ -f $WORK/boot/main.patched.bin ] && echo 已完成 / done || echo 未完成 / not yet)"
+    print "收集着色器 | collected:  $(ls $WORK/shader_dump 2>/dev/null | grep -c '\.ctl$' || true)"
+    print "Mac 缓存 | Mac cache:    $(ls $WORK/shader_cache/b-$CHAIN 2>/dev/null | grep -c '\.metallib$' || true)"
+    print "手机缓存 | iPhone cache: $(ls $WORK/shader_cache/b-$CHAIN-ios 2>/dev/null | grep -c '\.metallib$' || true)"
+}
+
+case ${1:-help} in
+    setup) shift; cmd_setup "$@";; import) shift; cmd_import "$@";; boot) shift; cmd_boot "$@";; play) shift; cmd_play "$@";;
+    collect) shift; ensure_setup; ensure_input "$1"; ensure_boot; ensure_collect;;
+    shaders) shift; cmd_shaders "$@";; ios) shift; cmd_ios "$@";; status) shift; cmd_status "$@";; *) cmd_help;;
+esac

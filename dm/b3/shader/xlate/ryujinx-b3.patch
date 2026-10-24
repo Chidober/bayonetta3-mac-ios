@@ -1,0 +1,46 @@
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs	2026-10-20 16:05:00
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs	2026-10-20 16:05:00
+@@ -24,6 +24,12 @@
+                     {
+                         bool isWorthPropagating = propVar.Uses.Count == 1 || IsWorthPropagating(assignment.Source);
+ 
++                        // B3 patch: SPIR-V function calls take their arguments as local variable pointers (CodeGen/Spirv GenerateCall), so never propagate an expression into a Call.
++                        if (UsedByCall(propVar))
++                        {
++                            isWorthPropagating = false;
++                        }
++
+                         if (propVar.Defs.Count == 1 && isWorthPropagating)
+                         {
+                             PropagateExpression(propVar, assignment.Source);
+@@ -42,6 +48,19 @@
+             RemoveEmptyBlocks(mainBlock);
+         }
+ 
++        private static bool UsedByCall(AstOperand propVar)
++        {
++            foreach (IAstNode use in propVar.Uses)
++            {
++                if (use is AstOperation op && op.Inst == Instruction.Call)
++                {
++                    return true;
++                }
++            }
++
++            return false;
++        }
++
+         private static bool IsWorthPropagating(IAstNode source)
+         {
+             if (source is not AstOperation srcOp)
+@@ -129,7 +148,9 @@
+                         parent.Remove(block);
+                     }
+                 }
+-                else if (isIf && parent.Type == AstBlockType.Else && parent.Count == (hasElse ? 2 : 1))
++                // B3 patch: CodeGen/Spirv only branches from an If to a following Else, never to an ElseIf, so with "else if" the false path skipped the
++                // whole else-if / else chain (jump-table BRX targets after the first were lost: character outfit colours). Keep "else { if }" nested instead.
++                else if (false && isIf && parent.Type == AstBlockType.Else && parent.Count == (hasElse ? 2 : 1))
+                 {
+                     AstBlock parentOfParent = parent.Parent;
+ 

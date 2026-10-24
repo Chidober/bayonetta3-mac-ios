@@ -1,0 +1,2 @@
+b3x21
+# B3 着色器翻译链版本号：dm/b3/shader/xlate 或 build.py 的输出格式变了就手动加一，与 dm/b3/Makefile 的 B3_SHADER_CHAIN 一起改 | B3 shader translation chain tag: bump by hand when dm/b3/shader/xlate or build.py output changes, together with B3_SHADER_CHAIN in dm/b3/Makefile

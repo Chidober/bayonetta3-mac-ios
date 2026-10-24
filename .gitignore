@@ -1,0 +1,12 @@
+# 构建产物 | build outputs
+dm/b3/build/
+dm/b3/shader/xlate/obj/
+dm/b3/shader/xlate/bin/
+__pycache__/
+*.pyc
+.DS_Store
+# 游戏文件与生成物一律不进仓库（工作目录缺省在 ~/b3-work）| game files and generated outputs never go into the repository (work dir defaults to ~/b3-work)
+work/
+*.nso
+*.nca
+*.metallib
