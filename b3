@@ -56,10 +56,11 @@ ensure_collect() {
     say "收集到 $(ctl_count) 个着色器 | collected $(ctl_count) shaders"
 }
 ensure_shaders() {   # $1 = macosx | iphoneos
-    # 新着色器 → 重编；玩过 3 局以上（日志里攒了更多顶点 / 贴图格式事实）→ 增量重编一次（约 2 分钟）| new shaders → rebuild; 3+ sessions played since (more vertex / texture format facts in the logs) → one incremental rebuild (about 2 minutes)
+    # 新着色器 → 重编；正式玩过 3 局以上（日志里攒了更多顶点 / 贴图格式事实）→ 增量重编一次（约 2 分钟，终端有提示）| new shaders → rebuild; 3+ sessions played since (more vertex / texture format facts in the logs) → one incremental rebuild (about 2 minutes)
     local dir=$WORK/shader_cache/b-$CHAIN; [ "$1" = iphoneos ] && dir=$dir-ios
-    local n=$(ctl_count) logs=$(ls $WORK/logs 2>/dev/null | wc -l | tr -d ' ') st=(${(s:/:)"$(cat $dir/.built 2>/dev/null)"})
+    local n=$(ctl_count) logs=$(ls $WORK/logs 2>/dev/null | grep -c '^play_' || true) st=(${(s:/:)"$(cat $dir/.built 2>/dev/null)"})   # 只数正式游玩的日志（基准回放不算）| only count real play sessions (benchmark replays do not count)
     [ -d $dir ] && [ "$st[1]" = "$n" ] && [ $((logs - ${st[2]:-0})) -lt 3 ] && return
+    [ -d $dir ] && say "已玩 $((logs - ${st[2]:-0})) 局，用积累的格式信息增量更新着色器缓存（约 2 分钟）| $((logs - ${st[2]:-0})) sessions played, updating the shader cache with the gathered format information (about 2 minutes)"
     cmd_shaders $([ "$1" = iphoneos ] && echo --ios); print -n "$n/$logs" > $dir/.built
 }
 
