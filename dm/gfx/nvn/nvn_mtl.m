@@ -2031,6 +2031,10 @@ void pg_sub_begin_ext(uint64_t fence) { pg_sub_begin(fence); }
 void pg_commit_ext(id<MTLCommandBuffer> cb) { pg_commit(cb); }
 // 颜色附件实际挂上的格式：视图换了格式且挂得上就是视图格式，否则底图格式（挂附件与管线预测共用，口径一致）。warn：挂不上时报红
 // The format a colour attachment is actually attached with: the view's format if the view changes the format and it can be attached, otherwise the base texture's format (shared by attaching and pipeline prediction, so both agree). warn: log red when it cannot be attached
+#ifdef DM_B3
+static int b3_pf_int(MTLPixelFormat f);
+static inline int b3_packed_float(MTLPixelFormat f) { return f == MTLPixelFormatRG11B10Float || f == MTLPixelFormatRGB9E5Float; }   // 打包浮点：整数视图读写没有意义，游戏的 0x70 视图按底图格式处理 | packed float: integer views make no sense; the game's 0x70 views use the base format
+#endif
 static MTLPixelFormat rt_color_fmt(id<MTLTexture> base, const view_t *v, int has_v, int warn) {
     if (!base || !has_v || !v->set_format) return base.pixelFormat;
     uint32_t pf = 0; uint8_t swz[4];
@@ -2038,6 +2042,15 @@ static MTLPixelFormat rt_color_fmt(id<MTLTexture> base, const view_t *v, int has
     if (pf != (uint32_t)base.pixelFormat && tex_need_pfv(base.pixelFormat, (MTLPixelFormat)pf) && !(base.usage & MTLTextureUsagePixelFormatView)) {
         if (warn) RED_ONCE(48, "渲染目标视图格式 %#x 挂不上（底图 %lu 没有换格式用途），按底图格式画（首例）", v->format, (unsigned long)base.pixelFormat);
         return base.pixelFormat; }
+#ifdef DM_B3
+    // 整数 / 浮点不同类的视图不挂：底座模式下游戏经视图格式 0x70（RGBX8I）往 R11G11B10F 场景色上画后期，按整数视图挂了得到的是乱码（标题怪兽、角色菜单人物全黑）；
+    // 掌机模式下同一视图落在挂不了换格式视图的底图上，本来就按底图格式画、画面正确。按底图格式画与之一致
+    // views of a different class (integer vs float) are not attached: in docked mode the game draws post-processing into the R11G11B10F scene colour through a view of format 0x70 (RGBX8I); attaching the integer view gives garbage (title monster and character-menu character all black);
+    // in handheld mode the same view lands on a base texture that cannot take format views, so it is drawn with the base format and the picture is correct. Drawing with the base format matches that
+    if (b3_packed_float(base.pixelFormat) && b3_pf_int((MTLPixelFormat)pf)) {
+        if (warn) { static int n; if (!n++) MLOG("B3 渲染目标视图格式 %#x 与底图 %lu 整数 / 浮点不同类，按底图格式画（首例）| render-target view format of a different class, drawing with the base format", v->format, (unsigned long)base.pixelFormat); }
+        return base.pixelFormat; }
+#endif
     return (MTLPixelFormat)pf;
 }
 // color：颜色附件的视图换了格式（如 RGBA8 底图经 RGBA8_SRGB 视图写）就挂该格式的 Metal 视图——Switch 上写入与清除按视图格式编码，
@@ -2726,6 +2739,11 @@ static id<MTLTexture> tex_by_id(int tid) {   // 调用方持 g_rmu | Caller hold
         // B3 : a view whose bytes per pixel differ from the base texture makes Metal assert and abort on the spot (measured: RGBA16F base → RGBA8 integer view, crash right after loading a chapter 5 save); sample with the base format instead and log red
         if (r.v.set_format && pf != (uint32_t)base.pixelFormat) { int a = b3_pf_bytes(base.pixelFormat), b = b3_pf_bytes((MTLPixelFormat)pf);
             if (a && b && a != b) { RED_ONCE(64, "B3 贴图视图格式 %u 与底图 %lu 每像素字节数不同（%d / %d），按底图格式采样（首例 ser=%llu）", pf, (unsigned long)base.pixelFormat, b, a, (unsigned long long)rp->t.serial); pf = (uint32_t)base.pixelFormat; } }
+#endif
+#ifdef DM_B3
+        // 打包浮点底图（R11G11B10F 等）上的整数视图按底图格式采样：底座模式的后期链经 0x70（RGBX8I）视图读场景色，按整数读全是 0（与 rt_color_fmt 同一规则）
+        // integer views on packed-float bases (R11G11B10F, ...) sample with the base format: docked mode's post-processing chain reads the scene colour through 0x70 (RGBX8I) views, and reading them as integers gives all 0 (same rule as rt_color_fmt)
+        if (r.v.set_format && b3_packed_float(base.pixelFormat) && b3_pf_int((MTLPixelFormat)pf)) pf = (uint32_t)base.pixelFormat;
 #endif
         if (r.v.set_format && tex_need_pfv(base.pixelFormat, (MTLPixelFormat)pf) && !(base.usage & MTLTextureUsagePixelFormatView)) {
             base = tex_upgrade_pfv(&rp->t, base, (MTLPixelFormat)pf);
