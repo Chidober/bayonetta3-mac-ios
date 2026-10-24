@@ -401,6 +401,11 @@ def main(argv=None):
     if a.limit: keys = keys[:a.limit]
     global SDK; SDK = a.sdk
     out = a.out / (f'b-{CHAIN}' + ('-ios' if SDK == 'iphoneos' else '')); out.mkdir(parents=True, exist_ok=True)
+    # 编译器换了版本：编译缓存全部失效，提前说清楚要等多久（输出到 stderr，命令行只截 stdout 最后一行）| compiler version changed: the whole compile cache is stale, so say up front how long it takes (stderr; the command line only keeps the last stdout line)
+    ver = subprocess.run(['xcrun', '-sdk', SDK, 'metal', '--version'], capture_output=True, text=True).stdout.split('\n')[0]
+    vf = AIR_CACHE / f'.metal_version_{SDK}'
+    if AIR_CACHE.exists() and vf.exists() and vf.read_text() != ver:
+        print(f'注意：Metal 编译器已更新（{vf.read_text()} → {ver}），这次要重编全部着色器，约 40 分钟到 1.5 小时 | note: the Metal compiler was updated, all shaders must be recompiled this time (40 minutes to 1.5 hours)', file=sys.stderr, flush=True)
     work = Path(tempfile.mkdtemp(prefix='b3sh_'))
     jobs, tg, c1s = [], {}, {}
     def bin_of(k):   # 去掉 0x40 余量与头：图形 0x30、计算 0x100| drop the 0x40 margin and the header: 0x30 for graphics, 0x100 for compute 
@@ -434,6 +439,7 @@ def main(argv=None):
     zh = {v: k for k, v in ZH_STAGE.items()}
     a.map.parent.mkdir(parents=True, exist_ok=True)
     a.map.write_text('# kind: b3  B3 着色器映射表（dm/b3/shader/build.py）| B3 shader map\n' + ''.join(f'b3\t0\t{zh[stage[k]]}\t{k}\n' for k in sorted(stage)))
+    AIR_CACHE.mkdir(parents=True, exist_ok=True); vf.write_text(ver)   # 记下这次用的编译器版本 | record the compiler version used this time
     print(json.dumps({'chain': CHAIN, 'keys': len(keys), 'with_facts': sum(1 for k in keys if k in facts), 'fact_conflicts': conflicts,
                       'vs_linked': sum(1 for k in keys if stage[k] == 'vs' and links.get(k)), 'results': stats,
                       'xlate_tail': x.stdout.strip().splitlines()[-2:] if x.stdout else [], 'out': str(out), 'map': str(a.map)}, ensure_ascii=False))
