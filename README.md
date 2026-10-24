@@ -128,7 +128,18 @@ Keyboard:
 | Left stick | W A S D |
 | Right stick | G (up) V (left) B (down) N (right) |
 | Home | H |
+| Full screen on / off | F11 |
 | Frame grab (debugging) | F12 |
+
+### Mac display
+
+- The game runs in docked mode and renders at **1600×900**; the picture is upscaled to the window / screen size with MetalFX (e.g. 1080p in full screen). The window opens near 1600×900; **F11** toggles full screen.
+- Environment variables for one launch: `B3_DOCKED=0` handheld mode (1280×720), `B3_MFX=0` plain scaling instead of MetalFX, `B3_FULLSCREEN=1` start in full screen.
+
+### Benchmark and diagnostics
+
+- `./b3 bench record` plays a segment and records the input (a copy of the save is used); `./b3 bench` replays it on the Mac and `./b3 bench --ios` on the connected iPhone, then prints frame time, GPU time, long frames and thermal state.
+- Logs are kept small by default; `B3_DIAG_LOG=1` turns on detailed per-call logs when investigating a problem.
 
 ## 5. Install on iPhone (step by step)
 
@@ -171,8 +182,8 @@ Free-account signing expires after 7 days: just run `./b3 ios` again (game data 
 
 - **Occasional minor graphics glitches early on, improving as you play.** Some shaders compile most accurately only when the vertex and texture formats the game actually uses at run time are known; that information can only be gathered from the logs while you play and cannot ship with the repository. This is handled automatically: after every 3 sessions, the next launch does an incremental shader cache rebuild with the new information (about 2 minutes, announced in the terminal); the iPhone build updates the next time you run `./b3 ios`. If you see an obvious graphics error, play a few more sessions and check again, or run `./b3 shaders` (add `--ios` for iPhone) to update right away.
 - 13 tessellation shaders in the game cannot be translated yet (Metal has no equivalent stages), so the few objects that use them are not drawn.
-- The first time a new scene appears, render pipelines are created on the spot and cause a brief stutter; the same scene does not stutter again.
-- On iPhone, heavy scenes run at about 20–40 fps, and the phone gets as warm as with other large games.
+- The first time a new scene appears, render pipelines are created on the spot and cause a brief stutter. They are recorded, and from the next launch on they are built in the background at startup, so the same scenes no longer stutter.
+- On iPhone (15 Pro) most scenes run at 60 fps; heavy scenes, or a phone that is already hot, drop to about 30–40 fps. The game pauses while the app is in the background.
 - With Bluetooth headphones the sound lags the picture by about 0.15 s (the headphones' own latency).
 
 ## 7. Directory layout
