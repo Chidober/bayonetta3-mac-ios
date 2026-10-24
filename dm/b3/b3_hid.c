@@ -54,18 +54,23 @@ static void push_now(void);
 // ---------- Input record / replay (for benchmarks) ----------
 // B3_INPUT_REC=<file>: one line "phase frame buttons lx ly rx ry" per front-end input change; phase = number of present-interval changes so far (loading / cutscene / menu switches), frame = presents within that phase.
 // B3_INPUT_PLAY=<file>: ignore front-end input and play the lines back by the same "phase + frame"; an entry still not reached after 30 s logs B3-REPLAY-DESYNC and is applied anyway; when done log B3-REPLAY-END, and with B3_REPLAY_EXIT=1 exit 120 frames later.
+static int g_replaying;   // 1 = 回放中（前端输入不进游戏），2 = 回放线程自己在设触点 | 1 = replaying (front-end input ignored), 2 = the replay thread itself setting touches
 __attribute__((weak)) _Atomic uint32_t g_b3_load_epoch;   // hle_nvn.c；单测程序里没有 | hle_nvn.c; absent in test programs
 __attribute__((weak)) _Atomic uint64_t g_b3_frame_now;    // b3_nvn.c
-static int g_replaying;
 static uint64_t epoch_frame(uint32_t *ep) {   // 当前读取段与段内帧号 | current epoch and frame within it
     static uint32_t last_ep; static uint64_t base;
     uint32_t e = atomic_load(&g_b3_load_epoch); uint64_t f = atomic_load(&g_b3_frame_now);
     if (e != last_ep) { last_ep = e; base = f; }
     *ep = e; return f - base;
 }
-static void rec_input(uint64_t b, const int32_t s[4]) {
-    static FILE *fp; static int init; static uint64_t lb; static int32_t ls[4];
+uint64_t b3_epoch_frame(uint32_t *ep) { return epoch_frame(ep); }
+static FILE *rec_file(void) {
+    static FILE *fp; static int init;
     if (!init) { init = 1; const char *p = getenv("B3_INPUT_REC"); if (p && *p) { fp = fopen(p, "w"); if (fp) LOG("B3-REC 录制输入到 %s | recording input", p); } }
+    return fp;
+}
+static void rec_input(uint64_t b, const int32_t s[4]) {
+    static uint64_t lb; static int32_t ls[4]; FILE *fp = rec_file();
     if (!fp || (b == lb && !memcmp(s, ls, sizeof ls))) return;
     uint32_t e; uint64_t f = epoch_frame(&e);
     fprintf(fp, "%u\t%llu\t%llx\t%d\t%d\t%d\t%d\n", e, (unsigned long long)f, (unsigned long long)b, s[0], s[1], s[2], s[3]); fflush(fp);
@@ -120,7 +125,11 @@ static void touch_push_locked(const b3_touch_t *t, int n) {
     atomic_store(&hdr[1], 17); atomic_store(&hdr[2], tail);
     uint64_t c = atomic_load(&hdr[3]); if (c < 17) atomic_store(&hdr[3], c + 1);
 }
+static FILE *rec_file(void);
 void b3_touch_set(int n, const uint32_t *ids, const float *xs, const float *ys) {
+    if (g_replaying == 1) return;   // 回放时前端触点不进游戏 | during replay front-end touches do not reach the game
+    { FILE *fp = rec_file(); static int replay_ok; if (fp) { uint32_t e; uint64_t f; extern uint64_t b3_epoch_frame(uint32_t *ep); f = b3_epoch_frame(&e);   // 触点也录（标题画面接受触屏 / 鼠标点击）| touches are recorded too (the title screen accepts touch / mouse clicks)
+        fprintf(fp, "T\t%u\t%llu\t%d\t%.0f\t%.0f\n", e, (unsigned long long)f, n, n ? xs[0] : 0.f, n ? ys[0] : 0.f); fflush(fp); } (void)replay_ok; }
     if (n > TOUCH_MAX) n = TOUCH_MAX;
     pthread_mutex_lock(&g_touch_lock);
     b3_touch_t nw[TOUCH_MAX], gone[TOUCH_MAX]; int ng = 0;
@@ -207,11 +216,14 @@ static void *monkey_thread(void *arg) {
 
 static void *replay_thread(void *arg) {
     FILE *fp = fopen((const char *)arg, "r"); if (!fp) die("B3_INPUT_PLAY 打不开 %s | cannot open", (const char *)arg);
-    unsigned e; unsigned long long f, b; int s0, s1, s2, s3, n = 0;
-    while (fscanf(fp, "%u\t%llu\t%llx\t%d\t%d\t%d\t%d", &e, &f, &b, &s0, &s1, &s2, &s3) == 7) {
+    unsigned e; unsigned long long f, b = 0; int s0 = 0, s1 = 0, s2 = 0, s3 = 0, n = 0, tn = 0; float tx = 0, ty = 0; char line[256];
+    while (fgets(line, sizeof line, fp)) {
+        int touch = line[0] == 'T';
+        if (touch ? sscanf(line + 2, "%u\t%llu\t%d\t%f\t%f", &e, &f, &tn, &tx, &ty) != 5 : sscanf(line, "%u\t%llu\t%llx\t%d\t%d\t%d\t%d", &e, &f, &b, &s0, &s1, &s2, &s3) != 7) continue;
         for (int waited = 0;; waited++) { uint32_t ce; uint64_t cf = epoch_frame(&ce); if (ce > e || (ce == e && cf >= f)) break;
             if (waited == 30000) { static int nd; if (nd++ < 20) LOG("B3-REPLAY-DESYNC 第 %d 条等不到（要阶段 %u 帧 %llu，现在阶段 %u 帧 %llu），跳过等待 | entry not reached, applying anyway", n, e, f, ce, (unsigned long long)cf); break; }
             usleep(1000); }
+        if (touch) { uint32_t id = 1; g_replaying = 2; b3_touch_set(tn, &id, &tx, &ty); g_replaying = 1; n++; continue; }
         atomic_store(&g_buttons, b); atomic_store(&g_stick[0], s0); atomic_store(&g_stick[1], s1); atomic_store(&g_stick[2], s2); atomic_store(&g_stick[3], s3);
         push_now(); n++;
     }
