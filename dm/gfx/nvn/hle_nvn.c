@@ -880,7 +880,25 @@ void dm_gfx_suspend(int on) {
     pthread_mutex_unlock(&g_susp_mu);
     if (on) { mtl_drain(); LOG("[nvn] 图形挂起：在途 GPU 工作已清空"); } else LOG("[nvn] 图形恢复");
 }
+#ifdef DM_B3
+// 切到后台时暂停出图：iOS 不许后台的应用往 GPU 交活（交了就是一串「命令缓冲执行出错」），前端（b3_front_ios.m）失去活跃时置 g_b3_bg，
+// 游戏线程在下一次提交 / 出图处停住、等回到前台；g_b3_bg_parked 告诉前端已经停住了。效果等于游戏暂停（Switch 按 HOME 时游戏也停在这里）
+// Pause rendering in the background: iOS does not allow a background app to submit GPU work (doing so gives a string of "command buffer execution failed"); the front end (b3_front_ios.m) sets g_b3_bg when it resigns active,
+// and the game thread stops at the next submit / present until the app is in the foreground again; g_b3_bg_parked tells the front end it has stopped. The effect is a game pause (on the Switch the game also stops here on HOME)
+_Atomic int g_b3_bg, g_b3_bg_parked;
+static void b3_bg_gate(void) {
+    if (!atomic_load(&g_b3_bg)) return;
+    LOG("B3 切到后台：暂停出图 | in the background: rendering paused");
+    atomic_store(&g_b3_bg_parked, 1);
+    while (atomic_load(&g_b3_bg)) usleep(20000);
+    atomic_store(&g_b3_bg_parked, 0);
+    LOG("B3 回到前台：继续出图 | back in the foreground: rendering resumed");
+}
+#endif
 NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h) {
+#ifdef DM_B3
+    b3_bg_gate();
+#endif
     gfx_enter();
     uint64_t t0 = now_ns(), c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID), i0, y0, s0 = thr_sys_ns(); thr_counts(&i0, &y0);
     ((queue_t *)q)->submits++;
@@ -1253,6 +1271,9 @@ static uint64_t present_period(const win_t *o) {
 }
 int (*g_nvn_loadscreen_up)(void);   // 宿主登记：读取画面此刻是否开着（diag.c 订阅界面消息时填；图形单测里为空 = 不设闸） | host registration: whether the loading screen is up right now (filled in when diag.c subscribes to UI messages; null in graphics unit tests = no gate)
 NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
+#ifdef DM_B3
+    b3_bg_gate();
+#endif
     (void)q; win_t *o = (win_t *)w; o->presents++;
     static uint64_t prev_in, prev_out, prev_pass, prev_draw;
     // 第一次进局的读取画面：后台管线预热没跑完就在这里等它（读取画面多停一会儿），进局后不在提交线程现编管线。预热早已完成时一次判断即过

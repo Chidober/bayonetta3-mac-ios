@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include "dm.h"
+#include <stdatomic.h>
 
 static CAMetalLayer *g_layer;
 static void (*g_guest)(void);
@@ -261,6 +262,13 @@ static const struct { int bit; float dx, dy; } k_dpad[] = {{12, -1, 0}, {13, 0, 
         UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithBounds:tv.bounds];
         NSData *png = [r PNGDataWithActions:^(UIGraphicsImageRendererContext *c) { [UIColor.darkGrayColor setFill]; [c fillRect:tv.bounds]; [tv.layer renderInContext:c.CGContext]; }];
         tv.hidden = h; [png writeToFile:[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/touch.png"] atomically:YES]; LOG("B3 触屏层截图已存 | touch layer snapshot saved"); });
+    {   // 失去活跃（切后台、拉下通知中心等）就暂停出图，回到活跃再继续（hle_nvn.c b3_bg_gate）；等游戏线程停住最多 0.5 秒，让已交的 GPU 活在进后台前做完
+        // resigning active (going to the background, pulling down Notification Center, ...) pauses rendering, becoming active again resumes it (hle_nvn.c b3_bg_gate); wait up to 0.5 s for the game thread to stop so the GPU work already submitted finishes before the app is backgrounded
+        extern _Atomic int g_b3_bg, g_b3_bg_parked;
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n;
+            atomic_store(&g_b3_bg, 1); for (int i = 0; i < 25 && !atomic_load(&g_b3_bg_parked); i++) usleep(20000); }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; atomic_store(&g_b3_bg, 0); }];
+    }
     [[NSNotificationCenter defaultCenter] addObserverForName:GCControllerDidDisconnectNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; vis(); }];
     UIApplication.sharedApplication.idleTimerDisabled = YES;   // 手柄玩时屏幕不自动熄 | the screen does not auto-lock while playing with a gamepad
     void (^hook)(GCController *) = ^(GCController *c) { c.extendedGamepad.buttonHome.preferredSystemGestureState = GCSystemGestureStateDisabled;
