@@ -120,7 +120,9 @@ uint64_t b3_romfs_read(b3_romfs_t *r, uint64_t off, void *buf, uint64_t n) {
         b3_rfile_t *f = &r->files[i];
         uint64_t s = lo > f->off ? lo : f->off, e = hi < f->off + f->size ? hi : f->off + f->size;
         if (s >= e) continue;
-        if (f->fd < 0) { if ((f->fd = open(f->host, O_RDONLY)) < 0) die("B3 RomFS：打不开文件 | cannot open file %s", f->host); b3_movie_file(f->host); }   // 第一次读到某文件：影片模块按扩展名决定要不要索引| first read of a file: the movie module decides by extension whether to index it 
+        if (f->fd < 0) { if ((f->fd = open(f->host, O_RDONLY)) < 0) die("B3 RomFS：打不开文件 | cannot open file %s", f->host); b3_movie_file(f->host); }
+        { static int tr = -1; if (tr < 0) { const char *e = getenv("B3_ROMFS_TRACE"); tr = e && *e == '1'; }   // 诊断：记下每次读的游戏文件与区间 | diagnostic: log the game file and range of every read
+          if (tr) LOG("B3-ROMFS-READ %s +%#llx %llu", strrchr(f->host, '/') ? strrchr(f->host, '/') + 1 : f->host, (unsigned long long)(s - f->off), (unsigned long long)(e - s)); }   // 第一次读到某文件：影片模块按扩展名决定要不要索引| first read of a file: the movie module decides by extension whether to index it 
         ssize_t got = pread(f->fd, out + (s + r->data_off - off), e - s, (off_t)(s - f->off));
         if (got != (ssize_t)(e - s)) die("B3 RomFS：读文件失败 | file read failed %s", f->host);
     }
