@@ -967,11 +967,13 @@ NVN(nvnWindowInitialize, NVNboolean, NVNwindow *w, const NVNwindowBuilder *b) {
 // Screen phase counter: incremented every time the game changes the present interval (loading screen 4, cutscene / menu 2, normal 1). Input record / replay aligns on
 // "frame N of phase k", independent of how fast each machine loads or plays cutscenes (b3_hid.c)
 _Atomic uint32_t g_b3_load_epoch;
+_Atomic int g_b3_interval = 1;   // 当前出图间隔（≥ 3 = 读取画面；nvn_mtl.m 读取画面时多预传贴图）| current present interval (≥ 3 = loading screen; nvn_mtl.m pre-uploads more textures then)
 #endif
 NVN(nvnWindowSetPresentInterval, void, NVNwindow *w, int v) {
     if (((win_t *)w)->interval != v) LOG("[nvn] 游戏设出图间隔 %d → %d", ((win_t *)w)->interval, v);
 #ifdef DM_B3
     if (((win_t *)w)->interval != v) atomic_fetch_add(&g_b3_load_epoch, 1);
+    atomic_store(&g_b3_interval, v);
 #endif
     ((win_t *)w)->interval = v;
 }

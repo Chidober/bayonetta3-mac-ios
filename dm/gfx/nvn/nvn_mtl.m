@@ -2609,6 +2609,37 @@ static treg_t *g_treg; static int g_ntreg;
 // release write at registration, relaxed atomic read on the reader side, without entering g_rmu (the former h_ser locked and unlocked on every lookup, thousands of times per frame in the camp)
 static _Atomic uint64_t g_tser[1 << 20];
 static samp_par *g_sreg; static uint8_t *g_sreg_ok; static void **g_sview; static uint64_t *g_srid; static int g_nsreg;   // g_sview：采样器号 → MTLSamplerState（持有） | g_sview: sampler ID → MTLSamplerState (retained)
+#ifdef DM_B3
+// 预排布贴图预传：登记时排队，提交线程每次提交开头按时间预算先传掉一部分（只在读取画面里传，每次 30 ms；平时缺省不传，B3_PREUP_MS 给平时预算），
+// 第一次画到时就不用在那一帧里集中上传（实测一帧可达 200 张、几十 MB）。只按序号核对：贴图已释放 / 换了序号就跳过
+// Pre-upload of packaged textures: queued at registration; at the start of each submission the submit thread uploads some of them within a time budget (only on loading screens, 30 ms each; nothing during play by default, B3_PREUP_MS gives a budget during play),
+// so the first draw does not have to upload them all in that frame (measured up to 200 textures, tens of MB, in one frame). Checked by serial only: a texture freed / with a changed serial is skipped
+static pthread_mutex_t g_preup_mu = PTHREAD_MUTEX_INITIALIZER;
+typedef struct { const tex_t *t; uint64_t ser; } preup_t;
+static preup_t *g_preup; static size_t g_preup_n, g_preup_cap, g_preup_head;
+static void preup_note(const tex_t *t) {
+    if (!t || !t->serial || !t->has_layout || !t->mem) return;
+    pthread_mutex_lock(&g_preup_mu);
+    if (g_preup_head && g_preup_head == g_preup_n) g_preup_head = g_preup_n = 0;
+    if (g_preup_n == g_preup_cap) { g_preup_cap = g_preup_cap ? g_preup_cap * 2 : 4096; g_preup = realloc(g_preup, g_preup_cap * sizeof *g_preup); }
+    g_preup[g_preup_n++] = (preup_t){t, t->serial};
+    pthread_mutex_unlock(&g_preup_mu);
+}
+static id<MTLTexture> tex_mtl(const tex_t *ct);
+static void preup_run(void) {
+    static double base_ms = -1; if (base_ms < 0) { const char *e = getenv("B3_PREUP_MS"); base_ms = e ? atof(e) : 0.0; }
+    extern _Atomic int g_b3_interval; double budget = atomic_load(&g_b3_interval) >= 3 ? 30.0 : base_ms;
+    if (budget <= 0) return;
+    uint64_t t0 = now_ns(); static uint64_t total;
+    for (;;) {
+        pthread_mutex_lock(&g_preup_mu); preup_t it = {0}; if (g_preup_head < g_preup_n) it = g_preup[g_preup_head++]; pthread_mutex_unlock(&g_preup_mu);
+        if (!it.t) break;
+        if (it.t->serial == it.ser && !serial_get(it.ser)) { tex_mtl(it.t); total++; }
+        if ((now_ns() - t0) / 1e6 >= budget) break;
+    }
+    { static uint64_t last; if (total >= last + 500) { last = total; MLOG("B3-PREUP 已预传 %llu 张 | pre-uploaded", (unsigned long long)total); } }
+}
+#endif
 void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
     int id_ = tid; if (id_ < 0) return;
     pthread_mutex_lock(&g_rmu);
@@ -2616,6 +2647,9 @@ void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
     g_reg_gen++;
     if (g_treg[id_].view) { defer_obj_unref((__bridge id)g_treg[id_].view); CFRelease(g_treg[id_].view); g_treg[id_].view = NULL; g_treg[id_].view_id = g_treg[id_].view_rid = 0; }
     g_treg[id_].ok = t != NULL; if (t) g_treg[id_].t = *t; g_treg[id_].has_v = v != NULL; if (v) g_treg[id_].v = *v;
+#ifdef DM_B3
+    preup_note(t);
+#endif
     if (id_ < (1 << 20)) atomic_store_explicit(&g_tser[id_], t ? t->serial : 0, memory_order_release);
 #ifdef DM_B3
     { uint64_t nvn_new_serial_peek(void); if (t && t->serial > nvn_new_serial_peek() + 1000) { static int n; if (n++ < 12) {
@@ -6307,6 +6341,7 @@ static int frz_op(unsigned op, const void *a) {   // 返回 1 = 这条操作不�
 void mtl_exec(const uint8_t *p) {
 #ifdef DM_B3
     { static uint64_t lf = ~0ull; uint64_t f = atomic_load(&g_cur_frame); if (f != lf) { lf = f; void b3_zero_textures(void); b3_zero_textures(); } }   // B3_ZERO_SER 诊断| B3_ZERO_SER diagnostic 
+    preup_run();
 #endif
     static int inited; if (!inited) { inited = 1; state_reset(); }
     static int dump_all = -1; if (dump_all < 0) dump_all = getenv("DM_NVN_PASSDUMP_ALL") != NULL;
