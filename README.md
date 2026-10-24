@@ -1,12 +1,12 @@
 # B3 Port：《猎天使魔女 3》在 Mac / iPhone 上运行
 
+中文 · [English](README.en.md)
+
 把你自己拥有的 Switch 版《猎天使魔女 3》（Bayonetta 3）游戏文件，转换成可以在 Apple Silicon Mac 和 iPhone 上原生运行的程序。
 
 - 不是模拟器：游戏的 ARM64 代码直接在 Apple 芯片上执行，系统服务由本项目在宿主上实现，图形调用（NVN）翻译成 Metal。
 - **本仓库不包含任何游戏文件、着色器、密钥或存档。** 你需要有正版游戏，并自己从主机导出文件。
 - 所有生成物都放在仓库外的工作目录（缺省 `~/b3-work`）。
-
-> English summary: this repository turns *your own* dump of Bayonetta 3 (Switch, v1.0.0) into a native macOS / iOS program. No game data is included. Mac: double-click `Play B3.command` (or run `./b3 play <game dir>`); iPhone: `./b3 ios`. Every preparation step runs automatically the first time.
 
 ---
 
