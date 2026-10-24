@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <time.h>
 #include "dm.h"
+#include <TargetConditionals.h>
 #include "b3_ipc.h"
 
 int svc_thread(int num, uint64_t *regs);   // hle_thread.c
@@ -144,8 +145,9 @@ static uint32_t csg_receive_message(b3_call_t *c) {
 }
 // 状态查询：GetOperationMode 5 → u8（0 掌机，DECISION：iPhone 按掌机），GetPerformanceMode 6 → u32（0 普通），GetCurrentFocusState 9 → u8（1 前台，按 Home 后 2）
 // State queries: GetOperationMode 5 → u8 (0 handheld; DECISION: an iPhone counts as handheld), GetPerformanceMode 6 → u32 (0 normal), GetCurrentFocusState 9 → u8 (1 in focus, 2 after Home)
-// B3_DOCKED=1：报底座模式（运行模式 1、性能模式 1 Boost），游戏按电视输出选更高的内部 / 输出分辨率（试验）| B3_DOCKED=1: report docked mode (operation mode 1, performance mode 1 Boost) so the game picks its higher TV internal / output resolution (experimental)
-static int docked(void) { static int d = -1; if (d < 0) { const char *e = getenv("B3_DOCKED"); d = e && !strcmp(e, "1"); if (d) LOG("B3 底座模式（试验）| docked mode (experimental)"); } return d; }
+// 底座模式（运行模式 1、性能模式 1 Boost）：游戏按电视输出 1600×900 并提高 3D 内部分辨率。Mac 缺省开，iPhone 缺省关（算力不够）；B3_DOCKED=0 / 1 强制
+// Docked mode (operation mode 1, performance mode 1 Boost): the game outputs 1600×900 like on a TV and raises the 3D internal resolution. On by default on the Mac, off on iPhone (not enough GPU); B3_DOCKED=0 / 1 forces it
+static int docked(void) { static int d = -1; if (d < 0) { const char *e = getenv("B3_DOCKED"); d = e && *e ? !strcmp(e, "1") : !TARGET_OS_IPHONE; LOG("B3 %s | %s", d ? "底座模式 1600×900" : "掌机模式 1280×720", d ? "docked mode 1600×900" : "handheld mode 1280×720"); } return d; }
 static uint32_t csg_operation_mode(b3_call_t *c) { c->out[0] = docked(); c->n_out = 1; return 0; }
 static uint32_t csg_performance_mode(b3_call_t *c) { c->out[0] = docked(); c->n_out = 1; return 0; }
 static uint32_t csg_focus_state(b3_call_t *c) { pthread_mutex_lock(&g_msgq_mu); c->out[0] = g_focus; pthread_mutex_unlock(&g_msgq_mu); c->n_out = 1; return 0; }
