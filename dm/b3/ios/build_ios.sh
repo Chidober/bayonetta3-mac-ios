@@ -18,7 +18,7 @@ cat > $W/Gen/b3.entitlements <<PL
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>com.apple.developer.kernel.increased-memory-limit</key><true/></dict></plist>
 PL
-FW=(AudioToolbox AVFoundation GameController VideoToolbox CoreMedia CoreVideo Foundation UIKit Metal QuartzCore CoreGraphics ImageIO UniformTypeIdentifiers)
+FW=(AudioToolbox AVFoundation MetalFX GameController VideoToolbox CoreMedia CoreVideo Foundation UIKit Metal QuartzCore CoreGraphics ImageIO UniformTypeIdentifiers)
 LD="-Wl,-force_load,$B3/build/ios/libb3.a $F"; for f in $FW; do LD="$LD -framework $f"; done
 cat > $W/project.yml <<YML
 name: B3IOS

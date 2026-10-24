@@ -36,7 +36,7 @@ B3SRC=main_b3.c b3_front.c b3_ipc.c b3_applet.c b3_libapplet.c b3_kernel.c b3_hi
 GFX=$(sort $(wildcard ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S ../gfx/tex/*.c ../gfx/tex/*.m))
 GFX_H=$(sort $(wildcard ../gfx/nvn/*.h ../gfx/nvn/include/*.h ../gfx/tex/*.h))
 STUBS=stubs_host.c
-FRAMEWORKS=-framework AudioToolbox -framework CoreAudio -framework GameController -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework Foundation -framework AppKit -framework Metal -framework QuartzCore -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers
+FRAMEWORKS=-framework AudioToolbox -framework CoreAudio -framework MetalFX -framework GameController -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework Foundation -framework AppKit -framework Metal -framework QuartzCore -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers
 CC_LINE=clang $(CFLAGS) -I. -I$(HOST) -I../gfx/nvn/include -fobjc-arc
 .DEFAULT_GOAL := build/b3host
 build/b3host: $(SHARED) $(B3SRC) $(GFX) $(GFX_H) $(STUBS) b3_ipc.h $(HOST)/dm.h $(HOST)/hle.h

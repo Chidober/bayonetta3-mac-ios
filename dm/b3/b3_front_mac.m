@@ -36,6 +36,10 @@ void b3_front_run(void (*guest)(void)) {
                                                     styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
                                                       backing:NSBackingStoreBuffered defer:NO];
         win.title = @"b3host"; win.restorable = NO; win.contentAspectRatio = NSMakeSize(16, 9);
+        // 全屏：F11 或窗口绿色按钮切换；B3_FULLSCREEN=1 启动即全屏。全屏时画面按屏幕实际像素输出（1080p 屏 = 1920×1080），配合 MetalFX 放大
+        // Full screen: toggle with F11 or the window's green button; B3_FULLSCREEN=1 starts full screen. Full screen outputs at the screen's real pixels (1920×1080 on a 1080p screen), together with MetalFX upscaling
+        win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
+        { NSRect vf = NSScreen.mainScreen.visibleFrame; CGFloat w = fmin(1600, vf.size.width * 0.9), h = w * 9 / 16; if (h > vf.size.height * 0.9) { h = vf.size.height * 0.9; w = h * 16 / 9; } [win setContentSize:NSMakeSize(floor(w), floor(h))]; }   // 缺省窗口尽量接近 1600×900 | default window as close to 1600×900 as fits
         static B3WinDelegate *dg; dg = [B3WinDelegate new]; win.delegate = dg;
         NSView *v = win.contentView; v.wantsLayer = YES; v.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
         g_layer = [CAMetalLayer layer];
@@ -46,6 +50,7 @@ void b3_front_run(void (*guest)(void)) {
         g_layer.drawableSize = CGSizeMake(v.bounds.size.width * win.backingScaleFactor, v.bounds.size.height * win.backingScaleFactor);
         [v.layer addSublayer:g_layer];
         [win center]; [win makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
+        { const char *fs = getenv("B3_FULLSCREEN"); if (fs && !strcmp(fs, "1")) dispatch_async(dispatch_get_main_queue(), ^{ [win toggleFullScreen:nil]; }); }
         // 键盘 → 掌机手柄（b3_hid.c 的 b3_input_set）：键位见下方按键表，H = Home，F12 = 抓帧。另外每 1/60 秒轮询已连的手柄（GameController，按位置映射：下 = B、右 = A、左 = Y、上 = X），与键盘合并。
         // Keyboard → handheld controller (b3_input_set in b3_hid.c): key map in the switch table below , H = Home, F12 = grab. A connected gamepad is also polled every 1/60 s (GameController, positional mapping: bottom = B, right = A, left = Y, top = X) and merged with the keyboard.
         static uint64_t held; static unsigned sticks;   // sticks 位：0 W 1 A 2 S 3 D 4 G 5 V 6 B 7 N | sticks bits: 0 W 1 A 2 S 3 D 4 G 5 V 6 B 7 N
@@ -102,6 +107,7 @@ void b3_front_run(void (*guest)(void)) {
                                   case 123: bit = 12; break; case 126: bit = 13; break; case 124: bit = 14; break; case 125: bit = 15; break;
                                   case 13: st = 0; break; case 0: st = 1; break; case 1: st = 2; break; case 2: st = 3; break;
                                   case 5: st = 4; break; case 9: st = 5; break; case 11: st = 6; break; case 45: st = 7; break; }
+            if (ev.keyCode == 103) { if (ev.type == NSEventTypeKeyDown && !ev.isARepeat) [win toggleFullScreen:nil]; return nil; }   // F11：全屏切换 | F11: toggle full screen
             if (ev.keyCode == 111 && ev.type == NSEventTypeKeyDown) {   // F12：抓下一帧（通道记录 + 每个通道的颜色快照 + 画面），存到 ~/b3-work/play/cap/grab_<帧号>（诊断）| F12: grab the next frame (pass dump + per-pass colour snapshots + picture) into ~/b3-work/play/cap/grab_<frame> (diagnostic)
                 extern _Atomic uint64_t g_b3_dump_at, g_b3_frame_now; uint64_t f = atomic_load(&g_b3_frame_now) + 3; atomic_store(&g_b3_dump_at, f);
                 LOG("B3-GRAB 抓第 %llu 帧 | grabbing frame %llu", (unsigned long long)f, (unsigned long long)f); return nil; }
@@ -131,7 +137,7 @@ void b3_front_run(void (*guest)(void)) {
         // 窗口标题每秒显示帧率（出图次数差）| the window title shows the frame rate every second (difference of present counts)
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { (void)t; extern _Atomic uint64_t g_b3_presents; static uint64_t last;
             uint64_t now = atomic_load(&g_b3_presents); win.title = [NSString stringWithFormat:@"b3host — %llu fps", (unsigned long long)(now - last)]; last = now; }];
-        LOG("B3 窗口已开 1280x720 | window open 1280x720");
+        LOG("B3 窗口已开 %.0fx%.0f | window open", win.contentView.bounds.size.width, win.contentView.bounds.size.height);
         pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 64u << 20);
         pthread_t th; if (pthread_create(&th, &a, guest_tramp, (void *)guest)) die("B3 客体线程创建失败 | guest thread creation failed");
         [NSApp run];

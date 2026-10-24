@@ -6813,6 +6813,37 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTe
     [en endEncoding];
     return 1;
 }
+#if defined(DM_B3) && !DM_NVN_M3
+// MetalFX 空间放大（B3_MFX=0 关）：游戏画面（底座 1600×900 / 掌机 1280×720）先用 MetalFX 放大到屏幕上实际显示的大小，再按原流程贴到画布；
+// 只在放大时用（目标比输入大 5% 以上），缩小或原尺寸照旧。输出贴图按尺寸缓存；编码前加一道队列屏障，等之前的绘制做完
+// MetalFX spatial upscaling (B3_MFX=0 turns it off): the game picture (docked 1600×900 / handheld 1280×720) is first upscaled by MetalFX to the size actually shown on screen, then drawn to the canvas as before;
+// only used when upscaling (target more than 5% larger than the input); downscaling or same size is unchanged. The output texture is cached by size; a queue barrier before encoding waits for earlier drawing
+#import <MetalFX/MetalFX.h>
+static id<MTLTexture> b3_mfx_upscale(CBUF cb, id<MTLTexture> src, NSUInteger cx, NSUInteger cy, NSUInteger cw, NSUInteger ch, NSUInteger ow, NSUInteger oh, MTLPixelFormat of) {
+    static int on = -1; if (on < 0) { const char *e = getenv("B3_MFX"); on = !(e && *e == '0'); }
+    if (!on || cx || cy || ow * 100 <= cw * 105 || oh <= ch) return nil;
+    static id<MTL4FXSpatialScaler> sc; static id<MTLTexture> out; static id<MTL4Compiler> comp; static NSUInteger kw, kh, kow, koh; static MTLPixelFormat kif, kof;
+    if (!sc || kw != src.width || kh != src.height || kow != ow || koh != oh || kif != src.pixelFormat || kof != of) {
+        if (![MTLFXSpatialScalerDescriptor supportsMetal4FX:g_dev]) { on = 0; MLOG("B3-MFX 设备不支持 MetalFX（Metal 4），按普通缩放 | device does not support MetalFX (Metal 4), plain scaling"); return nil; }
+        if (!comp) comp = [g_dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:nil];
+        MTLFXSpatialScalerDescriptor *d = [MTLFXSpatialScalerDescriptor new];
+        d.inputWidth = src.width; d.inputHeight = src.height; d.outputWidth = ow; d.outputHeight = oh;
+        d.colorTextureFormat = src.pixelFormat; d.outputTextureFormat = of; d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
+        sc = comp ? [d newSpatialScalerWithDevice:g_dev compiler:comp] : nil;
+        if (!sc) { on = 0; MLOG("【红】B3-MFX MetalFX 放大器建不出，按普通缩放 | MetalFX scaler could not be created, plain scaling"); return nil; }
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:of width:ow height:oh mipmapped:NO];
+        td.usage = sc.outputTextureUsage | MTLTextureUsageShaderRead; td.storageMode = MTLStorageModePrivate;
+        out = [g_dev newTextureWithDescriptor:td]; res_add(out);
+        kw = src.width; kh = src.height; kow = ow; koh = oh; kif = src.pixelFormat; kof = of;
+        MLOG("B3-MFX MetalFX 放大 %lux%lu → %lux%lu | MetalFX upscaling", (unsigned long)cw, (unsigned long)ch, (unsigned long)ow, (unsigned long)oh);
+    }
+    sc.colorTexture = src; sc.inputContentWidth = cw; sc.inputContentHeight = ch; sc.outputTexture = out;
+    id<MTL4ComputeCommandEncoder> e = [cb computeCommandEncoder];
+    [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; [e endEncoding];
+    [sc encodeToCommandBuffer:cb];
+    return out;
+}
+#endif
 static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, const int crop[4], int uv_i) {
     id<MTLTexture> src = present_src(src0);
     NSUInteger cx = 0, cy = 0, cw = src.width, ch = src.height;
@@ -6827,6 +6858,10 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
     double dw = dst.width, dh = dst.height, s = fmin(dw / cw, dh / ch);
     MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
     if (fabs((dw / dh) / ((double)cw / ch) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
+#if defined(DM_B3) && !DM_NVN_M3
+    { id<MTLTexture> up = b3_mfx_upscale(cb, src, cx, cy, cw, ch, (NSUInteger)vp.width, (NSUInteger)vp.height, dst.pixelFormat);
+      if (up) { src = up; cx = cy = 0; cw = up.width; ch = up.height; } }
+#endif
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
     RPD *rp = [RPD new];
     rp.colorAttachments[0].texture = dst;
