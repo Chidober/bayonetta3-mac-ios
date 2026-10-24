@@ -36,6 +36,7 @@ int main(int argc, char **argv) {
         #define DOC(name, sub) setenv(name, [doc stringByAppendingPathComponent:sub].fileSystemRepresentation, 0)
         DOC("B3_INPUT", @"input"); DOC("B3_SAVE_DIR", @"save"); DOC("B3_SHADER_LIB", @"shader_cache"); DOC("B3_SHADER_MAP", @"shader_map.tsv");
         setenv("DM_B3_LENIENT", "1", 0); setenv("B3_WINDOW", "1", 0);
+        DOC("DM_PSO_USER", @"pso_user.tsv");   // 管线预热清单：玩过的场景下次启动在后台先建好 | pipeline warm-up list: scenes played before are prebuilt in the background on the next launch
         set_program_id(getenv("B3_INPUT"));
         // B3_BENCH=1（./b3 bench --ios 启动时传）：用 Documents/bench/save0 的新副本当存档，回放 Documents/bench/input.tsv，放完自动退出 | B3_BENCH=1 (passed by ./b3 bench --ios): use a fresh copy of Documents/bench/save0 as the save, replay Documents/bench/input.tsv, exit when done
         if (getenv("B3_BENCH") && !strcmp(getenv("B3_BENCH"), "1")) {

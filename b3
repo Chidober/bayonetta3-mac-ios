@@ -117,7 +117,7 @@ cmd_play() {
     local log=$WORK/logs/play_$(date +%Y%m%d_%H%M%S).log before=$(ctl_count)
     say "开始游戏（关窗口结束）| starting the game (close the window to quit); 日志 | log: $log"
     ( cd $WORK/boot && B3_WINDOW=1 DM_B3_LENIENT=1 B3_INPUT=$WORK/input B3_PROGRAM_ID=$(program_id) B3_SAVE_DIR=$WORK/save \
-      B3_SHADER_LIB=$WORK/shader_cache B3_SHADER_MAP=$WORK/shader_map.tsv B3_SHADER_DUMP=$WORK/shader_dump B3_CAPTURE_DIR=$WORK/cap B3_CAPTURE_FRAMES=0 \
+      B3_SHADER_LIB=$WORK/shader_cache B3_SHADER_MAP=$WORK/shader_map.tsv B3_SHADER_DUMP=$WORK/shader_dump B3_CAPTURE_DIR=$WORK/cap B3_CAPTURE_FRAMES=0 DM_PSO_USER=$WORK/pso_user.tsv \
         $B3/build/b3host . main subsdk0 sdk > $log 2>&1 ) || true
     [ "$(ctl_count)" = "$before" ] || say "这局收集到新的着色器，下次启动会自动更新缓存 | new shaders were collected this session; the cache updates automatically next launch"
 }

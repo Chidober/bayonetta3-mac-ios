@@ -3272,7 +3272,13 @@ static void warm_start(void) {
         NSMutableArray<NSString *> *all = [NSMutableArray arrayWithObject:seed];
         NSString *user = pso_user_path();
         if (user && [NSFileManager.defaultManager fileExistsAtPath:user]) [all addObject:user];
+#ifdef DM_B3
+        // B3 没有随包种子清单：只用本机玩过记下的清单（第一次启动没有，第二次起预热）| B3 ships no seed manifest: use only the list recorded on this machine (none on the first launch, warm-up from the second)
+        if (![NSFileManager.defaultManager fileExistsAtPath:seed]) [all removeObject:seed];
+        if (!all.count) return;
+#else
         if (![NSFileManager.defaultManager fileExistsAtPath:seed]) return;
+#endif
         paths = all;
     }
     if (!g_warm_items) g_warm_items = [NSMutableArray array];
