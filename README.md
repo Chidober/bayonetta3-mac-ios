@@ -1,37 +1,37 @@
-# B3 Port：《猎天使魔女 3》在 Mac / iPhone 上运行
+# B3 Port: Bayonetta 3 on Mac / iPhone
 
-中文 · [English](README.en.md)
+English · [中文](README.zh-CN.md)
 
-把你自己拥有的 Switch 版《猎天使魔女 3》（Bayonetta 3）游戏文件，转换成可以在 Apple Silicon Mac 和 iPhone 上原生运行的程序。
+Turns your own copy of the Switch game *Bayonetta 3* into a program that runs natively on Apple Silicon Macs and iPhones.
 
-- 不是模拟器：游戏的 ARM64 代码直接在 Apple 芯片上执行，系统服务由本项目在宿主上实现，图形调用（NVN）翻译成 Metal。
-- **本仓库不包含任何游戏文件、着色器、密钥或存档。** 你需要有正版游戏，并自己从主机导出文件。
-- 所有生成物都放在仓库外的工作目录（缺省 `~/b3-work`）。
+- Not an emulator: the game's ARM64 code runs directly on the Apple chip, system services are implemented by this project on the host, and graphics calls (NVN) are translated to Metal.
+- **This repository contains no game files, shaders, keys or saves.** You need a legitimate copy of the game and must dump the files from your own console.
+- All generated files live in a work directory outside the repository (default `~/b3-work`).
 
 ---
 
-## 1. 需要准备什么
+## 1. Requirements
 
-| 项目 | 要求 |
+| Item | Requirement |
 |---|---|
-| 电脑 | Apple Silicon（M 系列）Mac，macOS 26 或更新 |
-| 开发工具 | Xcode 26 或更新（含 Metal 工具链），[Homebrew](https://brew.sh) |
-| 手机（可选） | iPhone，iOS 26 或更新，**8 GB 内存**（iPhone 15 Pro 及更新机型）；数据线 |
-| Apple 账号（手机用） | 免费的 Apple ID 即可（签名 7 天有效，过期重装一次） |
-| 游戏 | 《猎天使魔女 3》Switch 卡带 / 数字版，**版本 1.0.0，不装更新**（Title ID `01004A4010FEA000`） |
-| 磁盘空间 | 约 20 GB（游戏数据 14 GB + 着色器缓存与构建） |
-| 操作 | Mac：键盘或手柄；iPhone：触屏或蓝牙手柄 |
+| Computer | Apple Silicon (M-series) Mac, macOS 26 or later |
+| Developer tools | Xcode 26 or later (with the Metal toolchain), [Homebrew](https://brew.sh) |
+| Phone (optional) | iPhone, iOS 26 or later, **8 GB of memory** (iPhone 15 Pro or newer); a cable |
+| Apple account (for the phone) | A free Apple ID is enough (signing lasts 7 days; reinstall when it expires) |
+| Game | *Bayonetta 3* for Switch, cartridge or digital, **version 1.0.0 with no update** (Title ID `01004A4010FEA000`) |
+| Disk space | About 20 GB (14 GB of game data + shader cache and build files) |
+| Controls | Mac: keyboard or gamepad; iPhone: touch or Bluetooth gamepad |
 
-## 2. 导出游戏文件
+## 2. Dump the game files
 
-用你自己的 Switch 和游戏，通过 [nxdumptool](https://github.com/DarkMatterCore/nxdumptool) 导出（本项目不提供也不讲解获取密钥的方法）：
+Using your own Switch and game, dump the files with [nxdumptool](https://github.com/DarkMatterCore/nxdumptool) (this project neither provides keys nor explains how to obtain them):
 
-1. 在 nxdumptool 里选择游戏 → **NCA FS section dump** → **Program #0**；
-2. 导出 **section 0（ExeFS）** 和 **section 1（RomFS）**；
-3. 在电脑上整理成这样一个目录：
+1. In nxdumptool, select the game → **NCA FS section dump** → **Program #0**;
+2. Dump **section 0 (ExeFS)** and **section 1 (RomFS)**;
+3. On the computer, arrange them into one folder like this:
 
 ```
-你的目录/
+your-folder/
 ├── ExeFS/
 │   ├── main
 │   ├── main.npdm
@@ -39,166 +39,166 @@
 │   ├── sdk
 │   └── subsdk0
 └── RomFS/
-    └── …（约 530 个文件，共 14 GB）
+    └── … (about 530 files, 14 GB in total)
 ```
 
-## 3. 一键游玩
+## 3. One-click play
 
-**Mac：** 双击仓库里的 **`Play B3.command`**，第一次会弹窗让你选择第 2 步整理好的游戏目录，之后全部自动完成：
+**Mac:** double-click **`Play B3.command`** in the repository. The first time, a dialog asks for the game folder from step 2; everything else then happens automatically:
 
-1. 安装依赖（Homebrew 的 dotnet / spirv-cross / xcodegen 和一个 Python 环境）；
-2. 改写游戏代码模块；
-3. 后台启动一次游戏，收集全部着色器（约 1–2 分钟，不开窗口）；
-4. 把着色器编成 Metal 缓存（**只有第一次很慢，约 40 分钟到 1.5 小时，视机器而定**，之后秒开）；
-5. 打开游戏窗口。
+1. installs dependencies (dotnet / spirv-cross / xcodegen from Homebrew, and a Python environment);
+2. rewrites the game's code modules;
+3. starts the game once in the background to collect all shaders (about 1–2 minutes, no window);
+4. compiles the shaders into a Metal cache (**slow only the first time: about 40 minutes to 1.5 hours depending on the machine**; instant afterwards);
+5. opens the game window.
 
-也可以在终端里运行，效果相同：
+You can also run it from a terminal with the same effect:
 
 ```bash
-./b3 play /path/to/你的游戏目录
+./b3 play /path/to/your-game-folder
 ```
 
-以后再玩只需双击 `Play B3.command` 或运行 `./b3 play`。
+After that, just double-click `Play B3.command` or run `./b3 play` to play.
 
-**iPhone：** 用数据线连上已解锁、已打开开发者模式的 iPhone（见第 5 节），在 Xcode 里登录过 Apple ID，然后运行：
+**iPhone:** connect an unlocked iPhone with Developer Mode turned on (see section 5) by cable, make sure you are signed in to an Apple ID in Xcode, then run:
 
 ```bash
 ./b3 ios
 ```
 
-它会自动补齐上面的准备步骤、生成手机版着色器缓存（第一次同样较慢）、找到 Xcode 里的签名团队和连着的手机、打包安装并推送游戏数据。
+It fills in any missing preparation steps, builds the iPhone shader cache (also slow the first time), finds the signing team in Xcode and the connected phone, then packages and installs the app and pushes the game data.
 
-下面第 4、5 节是分步说明，出问题时可以对照排查。
+Sections 4 and 5 below describe each step separately, useful for troubleshooting.
 
-## 4. 分步运行（Mac）
+## 4. Step by step (Mac)
 
-在终端里进入本仓库目录，依次执行：
+In a terminal, go to this repository's folder and run in order:
 
 ```bash
 ./b3 setup
 ```
 
-检查 Xcode、安装 dotnet / spirv-cross / xcodegen（通过 Homebrew），并建一个 Python 环境。
+Checks Xcode, installs dotnet / spirv-cross / xcodegen (through Homebrew) and creates a Python environment.
 
 ```bash
-./b3 import /path/to/你的目录
+./b3 import /path/to/your-folder
 ```
 
-登记游戏文件位置（只读引用，不复制）。如果版本不是 1.0.0 会给出警告。
+Records where the game files are (referenced read-only, not copied). Warns if the version is not 1.0.0.
 
 ```bash
 ./b3 boot
 ```
 
-编译宿主程序，并把游戏的三个代码模块改写成能在 Mac / iPhone 上执行的形式（约 1 分钟）。
+Builds the host program and rewrites the game's three code modules so they can run on Mac / iPhone (about 1 minute).
 
 ```bash
 ./b3 collect
 ```
 
-后台启动一次游戏，收集游戏启动时登记的全部着色器（约 1–2 分钟，不开窗口）。
+Starts the game once in the background and collects every shader the game registers at startup (about 1–2 minutes, no window).
 
 ```bash
 ./b3 shaders
 ```
 
-把收集到的着色器翻译、编译成 Metal 缓存。**第一次需要较长时间**（约 6300 个着色器，约 40 分钟到 1.5 小时）；以后只编新增的。
+Translates the collected shaders and compiles them into a Metal cache. **The first run takes a while** (about 6,300 shaders, 40 minutes to 1.5 hours); later runs only compile what is new.
 
 ```bash
 ./b3 play
 ```
 
-开始玩。存档在 `~/b3-work/save`，日志在 `~/b3-work/logs`。随时可用 `./b3 status` 查看进度。
+Play. Saves are in `~/b3-work/save`, logs in `~/b3-work/logs`. Run `./b3 status` at any time to see progress.
 
-### Mac 操作
+### Mac controls
 
-接上手柄（Xbox / PS / Switch Pro 等）即可直接用，按键按位置对应 Switch（下 = B、右 = A、左 = Y、上 = X），手柄的 Home 键切换主页。
+Connect a gamepad (Xbox / PlayStation / Switch Pro, etc.) and it works directly; buttons map by position to the Switch layout (bottom = B, right = A, left = Y, top = X), and the gamepad's Home button toggles the HOME menu.
 
-键盘：
+Keyboard:
 
-| Switch | 键盘 |
+| Switch | Keyboard |
 |---|---|
-| A / B | L / K（回车 = A，退格 = B） |
+| A / B | L / K (Return = A, Backspace = B) |
 | X / Y | I / J |
 | L / R | Q / E |
-| ZL / ZR | Z / 空格 |
+| ZL / ZR | Z / Space |
 | + / − | = / - |
 | L3 / R3 | U / O |
-| 十字键 | 方向键 |
-| 左摇杆 | W A S D |
-| 右摇杆 | G（上）V（左）B（下）N（右） |
+| D-pad | Arrow keys |
+| Left stick | W A S D |
+| Right stick | G (up) V (left) B (down) N (right) |
 | Home | H |
-| 抓帧（调试） | F12 |
+| Frame grab (debugging) | F12 |
 
-## 5. 装到 iPhone（分步）
+## 5. Install on iPhone (step by step)
 
-1. 先生成手机版着色器缓存（同样第一次较慢）：
+1. Build the iPhone shader cache first (also slow the first time):
 
    ```bash
    ./b3 shaders --ios
    ```
 
-2. 准备签名与设备：
-   - 打开 Xcode → Settings → Accounts，登录你的 Apple ID，记下 **Team ID**（10 位字母数字）；
-   - 用数据线连接 iPhone，解锁并在手机上“信任这台电脑”；
-   - 手机上打开 **设置 → 隐私与安全性 → 开发者模式**，按提示重启；
-   - 查设备 UDID：
+2. Prepare signing and the device:
+   - Open Xcode → Settings → Accounts, sign in with your Apple ID and note the **Team ID** (10 letters and digits);
+   - Connect the iPhone by cable, unlock it and tap "Trust This Computer" on the phone;
+   - On the phone open **Settings → Privacy & Security → Developer Mode** and restart when prompted;
+   - Find the device UDID:
 
      ```bash
      xcrun devicectl list devices
      ```
 
-3. 打包、安装并推送数据（约 15 GB，数据线几分钟）。只连着一台手机、Xcode 只登录一个账号时可以省略参数：
+3. Package, install and push the data (about 15 GB, a few minutes over a cable). With only one phone connected and one account signed in to Xcode, the options can be omitted:
 
    ```bash
-   ./b3 ios --team <你的 Team ID> --device <设备 UDID>
+   ./b3 ios --team <your Team ID> --device <device UDID>
    ```
 
-   可选 `--bundle com.yourname.b3` 指定应用包名（缺省 `com.b3port.<团队号>`）。
+   Optionally set the app's bundle ID with `--bundle com.yourname.b3` (default `com.b3port.<team id>`).
 
-4. 第一次打开前，在手机上 **设置 → 通用 → VPN与设备管理** 里信任你的开发者账号。
+4. Before opening the app for the first time, trust your developer account on the phone under **Settings → General → VPN & Device Management**.
 
-免费账号的签名 7 天后过期：到时重新运行一次 `./b3 ios`（手机上已有的游戏数据不会重推）。
+Free-account signing expires after 7 days: just run `./b3 ios` again (game data already on the phone is not pushed again).
 
-### iPhone 操作
+### iPhone controls
 
-- **蓝牙手柄**：连上后触屏按键自动隐藏，操作同 Mac。
-- **触屏（战斗模式）**：左下角区域按下出现移动摇杆；其他空白处滑动转视角；右侧为 👊 X、🔫 Y、🦶 A、🦋 B、💨 ZR 等动作键；🌛 ZL 点一下按住、再点一下松开（魔兽召唤）；顶部有 −、+、透明度 ◐。
-- **触屏（菜单模式）**：点顶部 **menu** 切换。轻点 = 确认（A），上下左右滑动 = 方向键，另有 B（返回）、L / R / ZL / ZR、+；点 👊 回到战斗模式。
-- 游戏本身不支持触屏点击，菜单里的“轻点”是转成按键实现的。
+- **Bluetooth gamepad:** the touch buttons hide automatically once connected; controls are the same as on the Mac.
+- **Touch (combat mode):** pressing in the lower-left area brings up the movement stick; swiping anywhere else turns the camera; action buttons on the right are 👊 X, 🔫 Y, 🦶 A, 🦋 B, 💨 ZR, etc.; 🌛 ZL toggles — one tap holds it, another tap releases it (demon summon); −, + and the opacity button ◐ are at the top.
+- **Touch (menu mode):** tap **menu** at the top to switch. A tap = confirm (A), swipes up / down / left / right = D-pad, plus B (back), L / R / ZL / ZR and +; tap 👊 to return to combat mode.
+- The game itself does not support touch, so the menu "taps" are converted into button presses.
 
-## 6. 已知问题
+## 6. Known issues
 
-- **刚开始玩时可能偶有画面小问题，会越玩越准。** 一部分着色器要知道游戏运行时实际用的顶点格式、贴图格式才能编得最准，这些信息只能在你玩的过程中从日志里积累，无法随仓库提供。程序会自动处理：每累计玩 3 局，下次启动时用新信息增量重编一次着色器缓存（约 2 分钟，终端里会提示）；手机版在下次运行 `./b3 ios` 时同样更新。遇到明显的画面错误，多玩几局后再看；也可以手动运行 `./b3 shaders`（手机版加 `--ios`）立即更新。
-- 游戏里有 13 个曲面细分着色器暂时无法翻译（Metal 没有对应阶段），用到它们的少量物体不会显示。
-- 第一次进入新场景时要现场创建渲染管线，会卡顿一下，之后同一场景不再卡。
-- iPhone 上重场景帧率约 20–40 帧，发热与大型游戏相近。
-- 使用蓝牙耳机时声音会比画面晚约 0.15 秒（耳机本身的延迟）。
+- **Occasional minor graphics glitches early on, improving as you play.** Some shaders compile most accurately only when the vertex and texture formats the game actually uses at run time are known; that information can only be gathered from the logs while you play and cannot ship with the repository. This is handled automatically: after every 3 sessions, the next launch does an incremental shader cache rebuild with the new information (about 2 minutes, announced in the terminal); the iPhone build updates the next time you run `./b3 ios`. If you see an obvious graphics error, play a few more sessions and check again, or run `./b3 shaders` (add `--ios` for iPhone) to update right away.
+- 13 tessellation shaders in the game cannot be translated yet (Metal has no equivalent stages), so the few objects that use them are not drawn.
+- The first time a new scene appears, render pipelines are created on the spot and cause a brief stutter; the same scene does not stutter again.
+- On iPhone, heavy scenes run at about 20–40 fps, and the phone gets as warm as with other large games.
+- With Bluetooth headphones the sound lags the picture by about 0.15 s (the headphones' own latency).
 
-## 7. 目录结构
+## 7. Directory layout
 
 ```
-b3                     命令行入口（./b3 help 查看全部命令）
-Play B3.command        双击一键在 Mac 上游玩
-dm/b3/                 本游戏的系统服务、输入、声音、图形接入，Mac / iOS 前端
-dm/b3/shader/          着色器翻译（Switch → SPIR-V → Metal）
-dm/b3/ios/             iOS 应用入口与打包脚本
-dm/host/               通用运行时：模块装载、系统调用、线程
-dm/gfx/                通用图形层：NVN → Metal、纹理解码
-dm/tools/patch_nso.py  游戏代码模块改写器
-dm/third_party/        第三方源码（Ryujinx 着色器翻译库、bcdec）
+b3                     command-line entry point (./b3 help lists every command)
+Play B3.command        double-click for one-click play on the Mac
+dm/b3/                 this game's system services, input, sound, graphics hookup, Mac / iOS front ends
+dm/b3/shader/          shader translation (Switch → SPIR-V → Metal)
+dm/b3/ios/             iOS app entry point and packaging script
+dm/host/               generic runtime: module loading, system calls, threads
+dm/gfx/                generic graphics layer: NVN → Metal, texture decoding
+dm/tools/patch_nso.py  game code module rewriter
+dm/third_party/        third-party sources (Ryujinx shader translation library, bcdec)
 ```
 
-## 8. 致谢
+## 8. Acknowledgements
 
-- [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)（作者 jhaizhou，MIT）：本项目的通用运行时——模块装载、系统调用、NVN→Metal 图形层与纹理解码——来自这个项目。
-- [Ryujinx](https://github.com/Ryubing)（MIT）：着色器翻译库。
-- [bcdec](https://github.com/iOrange/bcdec)（MIT / 公有领域）：BC 纹理解码。
-- [switchbrew](https://switchbrew.org) 与 [libnx](https://github.com/switchbrew/libnx)：系统服务与数据结构的公开文档。
-- [nxdumptool](https://github.com/DarkMatterCore/nxdumptool)：导出自己的游戏文件。
+- [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile) (by jhaizhou, MIT): this project's generic runtime — module loading, system calls, the NVN → Metal graphics layer and texture decoding — comes from it.
+- [Ryujinx](https://github.com/Ryubing) (MIT): shader translation library.
+- [bcdec](https://github.com/iOrange/bcdec) (MIT / public domain): BC texture decoding.
+- [switchbrew](https://switchbrew.org) and [libnx](https://github.com/switchbrew/libnx): public documentation of system services and data structures.
+- [nxdumptool](https://github.com/DarkMatterCore/nxdumptool): dumping your own game files.
 
-## 9. 许可
+## 9. License
 
-MIT，见 [LICENSE](LICENSE)。第三方代码保留各自的许可证（`dm/third_party/*`）。
+MIT, see [LICENSE](LICENSE). Third-party code keeps its own licenses (`dm/third_party/*`).
 
-本项目与任天堂、白金工作室无关。《猎天使魔女 3》及相关商标归其各自所有者。请只使用你合法拥有的游戏副本。
+This project is not affiliated with Nintendo or PlatinumGames. *Bayonetta 3* and related trademarks belong to their respective owners. Only use a copy of the game that you legally own.
