@@ -3017,7 +3017,8 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
         int l = merged ? k->lmap[i] : i;
         uint32_t m = l == 0xff ? 0 : (k->chmask >> (4 * l)) & 0xf;
         c.writeMask = (m & 1 ? MTLColorWriteMaskRed : 0) | (m & 2 ? MTLColorWriteMaskGreen : 0) | (m & 4 ? MTLColorWriteMaskBlue : 0) | (m & 8 ? MTLColorWriteMaskAlpha : 0);
-        if (l != 0xff && k->blend_en >> l & 1) {
+        // 整数格式的目标不能混合（Metal 报错中止；Switch 上整数目标的混合被忽略，底座模式的后期通道会这样设）| integer-format targets cannot blend (Metal aborts; the Switch ignores blending on integer targets, and docked-mode post-processing passes set it)
+        if (l != 0xff && k->blend_en >> l & 1 && !b3_pf_int((MTLPixelFormat)k->cfmt[i])) {
             c.blendingEnabled = YES;
             c.sourceRGBBlendFactor = bfac(k->blend[l].src_rgb); c.destinationRGBBlendFactor = bfac(k->blend[l].dst_rgb);
             c.sourceAlphaBlendFactor = bfac(k->blend[l].src_a); c.destinationAlphaBlendFactor = bfac(k->blend[l].dst_a);
@@ -4565,7 +4566,14 @@ static void defer_try(const p_draw *dw, const p_draw_idx *di) {
     if (!defer_on() || defer_has_in_p() || g_defer_replaying || g_fz.active || g_fz_checking || !g_exec_next || !R.rt.n) return;
     int slot = defer_slot_free(); if (slot < 0) return;
     g_defer_cur = &g_defer_slots[slot];
-    int ncol = 0; for (int i = 0; i < R.rt.n; i++) ncol += R.rt.color[i] != NULL; if (!ncol) return;   // 只挂深度模板的通道（阴影图等）：Q 的定义是覆盖 P 的颜色，无颜色的 P 不可能推迟——原先预筛对它空转放行、完整前瞻白扫几十次绘制 | Render passes with only depth-stencil attached (shadow maps etc.): Q is defined as covering P's colors, so a P without color can never be deferred -- previously the pre-screen let it through idly and the full lookahead scanned dozens of draws for nothing
+    int ncol = 0; for (int i = 0; i < R.rt.n; i++) ncol += R.rt.color[i] != NULL; if (!ncol) return;
+#ifdef DM_B3
+    // 整数格式的颜色附件、或视图格式挂不上的附件不推迟合并：合并管线不走“输出类型相反”的片元版本，底座模式下回放时驱动崩溃 | no deferred merge with integer-format colour attachments or views whose format cannot be attached: the merged pipeline does not use the opposite-output fragment version, and in docked mode the driver crashed on replay
+    for (int i = 0; i < R.rt.n; i++) if (R.rt.color[i]) { id<MTLTexture> t = tex_mtl(R.rt.color[i]); if (!t) continue;
+        if (b3_pf_int(t.pixelFormat)) return;
+        uint32_t vf = 0; uint8_t sw[4];   // 视图要换成挂不上的格式（实际按底图画、片元输出类型可能不符）也不合并 | nor when the view asks for a format that cannot be attached (drawn with the base format, fragment output type may not match)
+        if (R.rt.has_cview[i] && R.rt.cview[i].set_format && nvn_fmt_to_mtl(R.rt.cview[i].format, &vf, sw) && vf && rt_color_fmt(t, &R.rt.cview[i], 1, 0) != (MTLPixelFormat)vf) return; }
+#endif   // 只挂深度模板的通道（阴影图等）：Q 的定义是覆盖 P 的颜色，无颜色的 P 不可能推迟——原先预筛对它空转放行、完整前瞻白扫几十次绘制 | Render passes with only depth-stencil attached (shadow maps etc.): Q is defined as covering P's colors, so a P without color can never be deferred -- previously the pre-screen let it through idly and the full lookahead scanned dozens of draws for nothing
     int has_clear = R.clear_d || R.clear_s; for (int i = 0; i < 8; i++) has_clear |= R.clear_c[i]; if (!has_clear) return;
     if (!defer_pre()) return;
     memset(&g_defer, 0, sizeof g_defer); g_defer.p_rt = R.rt; memcpy(g_defer.clear_c, R.clear_c, 8); memcpy(g_defer.cc, R.cc, sizeof R.cc);
