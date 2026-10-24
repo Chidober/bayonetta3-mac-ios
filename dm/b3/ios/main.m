@@ -37,6 +37,14 @@ int main(int argc, char **argv) {
         DOC("B3_INPUT", @"input"); DOC("B3_SAVE_DIR", @"save"); DOC("B3_SHADER_LIB", @"shader_cache"); DOC("B3_SHADER_MAP", @"shader_map.tsv");
         setenv("DM_B3_LENIENT", "1", 0); setenv("B3_WINDOW", "1", 0);
         set_program_id(getenv("B3_INPUT"));
+        // B3_BENCH=1（./b3 bench --ios 启动时传）：用 Documents/bench/save0 的新副本当存档，回放 Documents/bench/input.tsv，放完自动退出 | B3_BENCH=1 (passed by ./b3 bench --ios): use a fresh copy of Documents/bench/save0 as the save, replay Documents/bench/input.tsv, exit when done
+        if (getenv("B3_BENCH") && !strcmp(getenv("B3_BENCH"), "1")) {
+            NSString *b = [doc stringByAppendingPathComponent:@"bench"], *run = [b stringByAppendingPathComponent:@"save_run"];
+            [NSFileManager.defaultManager removeItemAtPath:run error:nil];
+            [NSFileManager.defaultManager copyItemAtPath:[b stringByAppendingPathComponent:@"save0"] toPath:run error:nil];
+            setenv("B3_SAVE_DIR", run.fileSystemRepresentation, 1); setenv("B3_INPUT_PLAY", [b stringByAppendingPathComponent:@"input.tsv"].fileSystemRepresentation, 1);
+            setenv("B3_REPLAY_EXIT", "1", 1); setenv("B3_MUTE", "1", 0);
+        }
         [NSFileManager.defaultManager createDirectoryAtPath:@(getenv("B3_SAVE_DIR")) withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *boot = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"boot"];
         if (chdir(boot.fileSystemRepresentation)) { fprintf(stderr, "[b3ios] chdir %s 失败 | failed\n", boot.fileSystemRepresentation); return 1; }

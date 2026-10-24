@@ -961,7 +961,18 @@ NVN(nvnWindowInitialize, NVNboolean, NVNwindow *w, const NVNwindowBuilder *b) {
         o->ntex ? (int)CTX(o->tex[0])->d.width : 0, o->ntex ? (int)CTX(o->tex[0])->d.height : 0, o->ntex ? CTX(o->tex[0])->d.format : 0);
     return 1;
 }
-NVN(nvnWindowSetPresentInterval, void, NVNwindow *w, int v) { if (((win_t *)w)->interval != v) LOG("[nvn] 游戏设出图间隔 %d → %d", ((win_t *)w)->interval, v); ((win_t *)w)->interval = v; }
+#ifdef DM_B3
+// 读取画面结束计数（间隔从 ≥ 3 回到 1 = 一段读取画面结束）：输入录制 / 回放按“第几段读取之后的第几帧”对齐，不受各机器读取快慢影响（b3_hid.c）
+// Loading-screen end counter (interval going from ≥ 3 back to 1 = one loading screen ended): input record / replay aligns on "frame N after the k-th loading screen", independent of each machine's loading speed (b3_hid.c)
+_Atomic uint32_t g_b3_load_epoch;
+#endif
+NVN(nvnWindowSetPresentInterval, void, NVNwindow *w, int v) {
+    if (((win_t *)w)->interval != v) LOG("[nvn] 游戏设出图间隔 %d → %d", ((win_t *)w)->interval, v);
+#ifdef DM_B3
+    if (((win_t *)w)->interval >= 3 && v < 3) atomic_fetch_add(&g_b3_load_epoch, 1);
+#endif
+    ((win_t *)w)->interval = v;
+}
 NVN(nvnWindowSetCrop, void, NVNwindow *w, int x, int y, int ww, int hh) {
     win_t *o = (win_t *)w; int v[4] = {x, y, ww, hh};
     if (memcmp(o->crop, v, sizeof v)) LOG("[nvn] WindowCrop %d,%d %dx%d", x, y, ww, hh);

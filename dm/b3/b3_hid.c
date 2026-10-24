@@ -48,7 +48,32 @@ static pthread_mutex_t g_push_lock = PTHREAD_MUTEX_INITIALIZER;   // 定时线�
 static uint8_t *g_hid;
 static uint64_t g_sampling;
 static void push_now(void);
+// ---------- 输入录制 / 回放（性能基准用）----------
+// B3_INPUT_REC=<文件>：前端输入每变一次记一行「读取段 帧 按键 lx ly rx ry」；帧 = 该段读取画面结束后出图的第几帧。
+// B3_INPUT_PLAY=<文件>：忽略前端输入，按同样的“段 + 帧”放回；放完记 B3-REPLAY-END，B3_REPLAY_EXIT=1 时再过 120 帧退出。
+// ---------- Input record / replay (for benchmarks) ----------
+// B3_INPUT_REC=<file>: one line "epoch frame buttons lx ly rx ry" per front-end input change; frame = presents since that epoch's loading screen ended.
+// B3_INPUT_PLAY=<file>: ignore front-end input and play the lines back by the same "epoch + frame"; when done log B3-REPLAY-END, and with B3_REPLAY_EXIT=1 exit 120 frames later.
+__attribute__((weak)) _Atomic uint32_t g_b3_load_epoch;   // hle_nvn.c；单测程序里没有 | hle_nvn.c; absent in test programs
+__attribute__((weak)) _Atomic uint64_t g_b3_frame_now;    // b3_nvn.c
+static int g_replaying;
+static uint64_t epoch_frame(uint32_t *ep) {   // 当前读取段与段内帧号 | current epoch and frame within it
+    static uint32_t last_ep; static uint64_t base;
+    uint32_t e = atomic_load(&g_b3_load_epoch); uint64_t f = atomic_load(&g_b3_frame_now);
+    if (e != last_ep) { last_ep = e; base = f; }
+    *ep = e; return f - base;
+}
+static void rec_input(uint64_t b, const int32_t s[4]) {
+    static FILE *fp; static int init; static uint64_t lb; static int32_t ls[4];
+    if (!init) { init = 1; const char *p = getenv("B3_INPUT_REC"); if (p && *p) { fp = fopen(p, "w"); if (fp) LOG("B3-REC 录制输入到 %s | recording input", p); } }
+    if (!fp || (b == lb && !memcmp(s, ls, sizeof ls))) return;
+    uint32_t e; uint64_t f = epoch_frame(&e);
+    fprintf(fp, "%u\t%llu\t%llx\t%d\t%d\t%d\t%d\n", e, (unsigned long long)f, (unsigned long long)b, s[0], s[1], s[2], s[3]); fflush(fp);
+    lb = b; memcpy(ls, s, sizeof ls);
+}
 void b3_input_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
+    { int32_t s[4] = {lx, ly, rx, ry}; rec_input(buttons, s); }
+    if (g_replaying) return;   // 回放时前端输入不进游戏 | during replay front-end input does not reach the game
     uint64_t old = atomic_exchange(&g_buttons, buttons);
     atomic_store(&g_stick[0], lx); atomic_store(&g_stick[1], ly); atomic_store(&g_stick[2], rx); atomic_store(&g_stick[3], ry);
     if (old != buttons) push_now();   // 按键变化立即推一个样本，不等下一个 60 Hz 节拍（少一次量化延迟）| push a sample as soon as buttons change instead of waiting for the next 60 Hz tick (one less quantization delay)
@@ -180,6 +205,21 @@ static void *monkey_thread(void *arg) {
     return NULL;
 }
 
+static void *replay_thread(void *arg) {
+    FILE *fp = fopen((const char *)arg, "r"); if (!fp) die("B3_INPUT_PLAY 打不开 %s | cannot open", (const char *)arg);
+    unsigned e; unsigned long long f, b; int s0, s1, s2, s3, n = 0;
+    while (fscanf(fp, "%u\t%llu\t%llx\t%d\t%d\t%d\t%d", &e, &f, &b, &s0, &s1, &s2, &s3) == 7) {
+        for (;;) { uint32_t ce; uint64_t cf = epoch_frame(&ce); if (ce > e || (ce == e && cf >= f)) break; usleep(1000); }
+        atomic_store(&g_buttons, b); atomic_store(&g_stick[0], s0); atomic_store(&g_stick[1], s1); atomic_store(&g_stick[2], s2); atomic_store(&g_stick[3], s3);
+        push_now(); n++;
+    }
+    fclose(fp);
+    LOG("B3-REPLAY-END 放完 %d 条，帧 %llu | replayed %d entries, frame %llu", n, (unsigned long long)atomic_load(&g_b3_frame_now), n, (unsigned long long)atomic_load(&g_b3_frame_now));
+    const char *x = getenv("B3_REPLAY_EXIT");
+    if (x && !strcmp(x, "1")) { uint64_t end = atomic_load(&g_b3_frame_now) + 120; while (atomic_load(&g_b3_frame_now) < end) usleep(10000); LOG("B3-REPLAY-EXIT"); exit(0); }
+    return NULL;
+}
+
 void b3_hid_attach(void *base) {
     if (g_hid) return;
     g_hid = base;
@@ -190,5 +230,6 @@ void b3_hid_attach(void *base) {
     pthread_detach(t);
     LOG("B3-HID attach npad=handheld style=%#x device=%#x", STYLE_HANDHELD, DEVICE_HANDHELD);
     { const char *m = getenv("B3_MONKEY"); if (m && *m) { pthread_t mt; if (pthread_create(&mt, NULL, monkey_thread, (void *)m)) die("B3_MONKEY 线程创建失败 | thread creation failed"); pthread_detach(mt); } }
+    { const char *pl = getenv("B3_INPUT_PLAY"); if (pl && *pl) { g_replaying = 1; pthread_t rt; if (pthread_create(&rt, NULL, replay_thread, (void *)pl)) die("B3_INPUT_PLAY 线程创建失败 | thread creation failed"); pthread_detach(rt); LOG("B3-REPLAY 回放输入 %s | replaying input", pl); } }
     { const char *spec = getenv("B3_PRESS"); if (spec && *spec) { pthread_t pt; if (pthread_create(&pt, NULL, press_thread, (void *)spec)) die("B3_PRESS 线程创建失败 | thread creation failed"); pthread_detach(pt); } }
 }

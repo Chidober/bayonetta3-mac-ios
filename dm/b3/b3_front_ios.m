@@ -267,7 +267,10 @@ static const struct { int bit; float dx, dy; } k_dpad[] = {{12, -1, 0}, {13, 0, 
         c.extendedGamepad.valueChangedHandler = ^(GCExtendedGamepad *gp, GCControllerElement *el) { (void)gp; (void)el; push(); }; LOG("B3 手柄已连 | gamepad connected: %s", c.vendorName.UTF8String ?: "?"); };
     for (GCController *c in GCController.controllers) hook(c);
     [[NSNotificationCenter defaultCenter] addObserverForName:GCControllerDidConnectNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { hook(n.object); vis(); }];
-    [NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *t) { (void)t; if (GCController.controllers.count) push(); }];   // 120 Hz 轮询（短按整形的时间点也靠它）| 120 Hz polling (also drives the tap-shaping time points)
+    [NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *t) { (void)t; if (GCController.controllers.count) push(); }];
+    // 热状态每 30 秒记一行（性能基准看发热）| thermal state logged every 30 s (benchmarks track heat)
+    [NSTimer scheduledTimerWithTimeInterval:30 repeats:YES block:^(NSTimer *t) { (void)t; static const char *k[] = {"nominal", "fair", "serious", "critical"};
+        NSProcessInfoThermalState ts = NSProcessInfo.processInfo.thermalState; LOG("B3-THERMAL %s", ts <= 3 ? k[ts] : "?"); }];   // 120 Hz 轮询（短按整形的时间点也靠它）| 120 Hz polling (also drives the tap-shaping time points)
     LOG("B3 iOS 窗口已开 %.0fx%.0f 点 | iOS window open %.0fx%.0f points", vc.view.bounds.size.width, vc.view.bounds.size.height, vc.view.bounds.size.width, vc.view.bounds.size.height);
     static int started; if (started++) return;
     pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 64u << 20);

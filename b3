@@ -74,6 +74,7 @@ cat <<'EOF'
   shaders [--ios]            把收集到的着色器编成缓存（--ios：手机版）| build the shader cache from collected shaders (--ios: for iPhone)
   ios [--team T] [--device UDID] [--bundle ID] [--no-data]
                              一键装到 iPhone：自动补齐步骤、自动找签名团队和连着的手机 | one-click iPhone install: fills in steps, finds the team and the connected phone
+  bench [record|--ios]       性能基准：录一段输入，在 Mac / 手机上回放并汇总帧率 | benchmark: record an input segment, replay it on Mac / iPhone and summarize performance
   status                     查看当前进度 | show progress
 EOF
 }
@@ -141,6 +142,7 @@ cmd_ios() {
         dev=$devs[1]
     fi
     [ -n "$bundle" ] || bundle=com.b3port.${(L)team}
+    print -n $bundle > $WORK/ios_bundle
     say "签名团队 | team: $team，设备 | device: $dev，包名 | bundle: $bundle"
     ensure_setup; ensure_input; ensure_boot; ensure_collect; ensure_shaders iphoneos
     say "打包并安装 | packaging and installing"
@@ -163,6 +165,45 @@ cmd_ios() {
     say "完成：在手机上打开应用（第一次要在 设置 → 通用 → VPN与设备管理 里信任开发者）| done: open the app on the phone (the first time, trust the developer in Settings → General → VPN & Device Management)"
 }
 
+cmd_bench() {
+    # 性能基准：record 在 Mac 上玩一段并录下输入；之后 ./b3 bench（Mac）或 ./b3 bench --ios 用同一存档回放同一段输入，打印帧时间 / GPU / 卡顿 / 热状态
+    # Benchmark: "record" plays a segment on the Mac and records the input; then ./b3 bench (Mac) or ./b3 bench --ios replays it from the same save and prints frame time / GPU / stalls / thermal state
+    local B=$WORK/bench mode=mac dev= bundle=
+    while [ $# -gt 0 ]; do case $1 in record) mode=record; shift;; --ios) mode=ios; shift;; --device) dev=$2; shift 2;; --bundle) bundle=$2; shift 2;; *) die "未知参数 $1 | unknown option $1";; esac; done
+    ensure_setup; ensure_input; ensure_boot; build_host; mkdir -p $B $WORK/logs
+    if [ $mode = record ]; then
+        rm -rf $B/save0 $B/save_rec; cp -R $WORK/save $B/save0; cp -R $B/save0 $B/save_rec
+        say "录制：从标题画面开始玩一段（建议进一段有战斗的关卡，2～3 分钟），玩完关窗口；存档用副本，不影响正式存档 | recording: play a segment from the title screen (ideally 2-3 minutes of combat), then close the window; a save copy is used, the real save is untouched"
+        ( cd $WORK/boot && B3_WINDOW=1 DM_B3_LENIENT=1 B3_INPUT=$WORK/input B3_PROGRAM_ID=$(program_id) B3_SAVE_DIR=$B/save_rec B3_INPUT_REC=$B/input.tsv \
+          B3_SHADER_LIB=$WORK/shader_cache B3_SHADER_MAP=$WORK/shader_map.tsv B3_CAPTURE_FRAMES=0 $B3/build/b3host . main subsdk0 sdk > $B/record.log 2>&1 ) || true
+        say "录下 $(wc -l < $B/input.tsv | tr -d ' ') 次输入变化 | recorded input changes"; return
+    fi
+    [ -s $B/input.tsv ] || die "还没录制，先运行 ./b3 bench record | nothing recorded yet, run ./b3 bench record first"
+    local log=$WORK/logs/bench_${mode}_$(date +%Y%m%d_%H%M%S).log
+    if [ $mode = mac ]; then
+        rm -rf $B/save_run; cp -R $B/save0 $B/save_run
+        say "Mac 回放中（开窗口，放完自动关）| replaying on the Mac (window closes when done)"
+        ( cd $WORK/boot && B3_WINDOW=1 B3_MUTE=1 DM_B3_LENIENT=1 B3_INPUT=$WORK/input B3_PROGRAM_ID=$(program_id) B3_SAVE_DIR=$B/save_run B3_INPUT_PLAY=$B/input.tsv B3_REPLAY_EXIT=1 \
+          B3_SHADER_LIB=$WORK/shader_cache B3_SHADER_MAP=$WORK/shader_map.tsv B3_CAPTURE_FRAMES=0 $B3/build/b3host . main subsdk0 sdk > $log 2>&1 ) || true
+    else
+        [ -n "$bundle" ] || bundle=$(cat $WORK/ios_bundle 2>/dev/null) || true
+        [ -n "$bundle" ] || die "不知道手机上应用的包名，用 --bundle 指定 | unknown app bundle ID on the phone, pass --bundle"
+        if [ -z "$dev" ]; then local devs=($(xcrun devicectl list devices 2>/dev/null | grep -i "iphone" | grep "available" | grep -oE "[0-9A-F]{8}-[0-9A-F]{16}")); [ ${#devs} -eq 1 ] || die "需要正好一台连着的 iPhone，或用 --device | exactly one connected iPhone is needed, or pass --device"; dev=$devs[1]; fi
+        local C=(--device $dev --domain-type appDataContainer --domain-identifier $bundle)
+        xcrun devicectl device copy to $C --source $B/save0 --destination Documents/bench/save0 >/dev/null
+        xcrun devicectl device copy to $C --source $B/input.tsv --destination Documents/bench/input.tsv >/dev/null
+        say "手机回放中（放完应用自动退出）| replaying on the phone (the app quits when done)"
+        local t0=$(date +%s); xcrun devicectl device process launch $C[1,2] --terminate-existing --environment-variables '{"B3_BENCH":"1"}' $bundle >/dev/null
+        local tmp=$WORK/bench/phone_logs; local f=
+        while :; do sleep 15; rm -rf $tmp; mkdir -p $tmp; xcrun devicectl device copy from $C --source Documents/logs --destination $tmp >/dev/null 2>&1 || continue
+            f=$(ls -t $tmp/**/b3_*.log(N) | head -1); [ -n "$f" ] && grep -q "B3-REPLAY-EXIT\|CRASH" $f && break
+            [ $(( $(date +%s) - t0 )) -gt 1800 ] && die "等了 30 分钟还没放完 | still running after 30 minutes"; done
+        cp $f $log
+    fi
+    grep -q "B3-REPLAY-END" $log || print -P "%F{yellow}注意 | note:%f 回放没放完（崩溃或中途退出），结果只供参考 | the replay did not finish (crash or early exit); results are indicative only"
+    /usr/bin/python3 $B3/tools/bench_summary.py $log "$mode $(date +%m-%d\ %H:%M)" | tee -a $B/results.txt
+}
+
 cmd_status() {
     print "游戏文件 | game files:   $([ -e $WORK/input ] && readlink $WORK/input || echo 未导入 / not imported)"
     print "改写模块 | modules:      $([ -f $WORK/boot/main.patched.bin ] && echo 已完成 / done || echo 未完成 / not yet)"
@@ -174,5 +215,5 @@ cmd_status() {
 case ${1:-help} in
     setup) shift; cmd_setup "$@";; import) shift; cmd_import "$@";; boot) shift; cmd_boot "$@";; play) shift; cmd_play "$@";;
     collect) shift; ensure_setup; ensure_input "$1"; ensure_boot; ensure_collect;;
-    shaders) shift; cmd_shaders "$@";; ios) shift; cmd_ios "$@";; status) shift; cmd_status "$@";; *) cmd_help;;
+    shaders) shift; cmd_shaders "$@";; bench) shift; cmd_bench "$@";; ios) shift; cmd_ios "$@";; status) shift; cmd_status "$@";; *) cmd_help;;
 esac
