@@ -16,7 +16,7 @@ Turns your own copy of the Switch game *Bayonetta 3* into a program that runs na
 |---|---|
 | Computer | Apple Silicon (M-series) Mac, macOS 26 or later |
 | Developer tools | Xcode 26 or later (with the Metal toolchain), [Homebrew](https://brew.sh) |
-| Phone (optional) | iPhone, iOS 26 or later, **8 GB of memory** (iPhone 15 Pro or newer); a cable |
+| Phone (optional) | iPhone, tested on iOS 26 or later, **8 GB of memory(better)** (tested on iPhone 15 Pro and Duo); a cable |
 | Apple account (for the phone) | A free Apple ID is enough (signing lasts 7 days; reinstall when it expires) |
 | Game | *Bayonetta 3* for Switch, cartridge or digital, **version 1.0.0 with no update** (Title ID `01004A4010FEA000`) |
 | Disk space | About 20 GB (14 GB of game data + shader cache and build files) |
