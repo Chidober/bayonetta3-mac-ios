@@ -9,6 +9,8 @@
 #include "dm.h"
 #include "b3_ipc.h"
 
+static int b3_diag(void) { static int on = -1; if (on < 0) { const char *e = getenv("B3_DIAG_LOG"); on = e && *e == '1'; } return on; }   // B3_DIAG_LOG=1：逐条诊断日志（缺省关）| B3_DIAG_LOG=1: per-call diagnostic logs (off by default)
+
 #define B3_SESS_BASE 0x8000u   // 会话句柄 = 0x8000 + 下标，与 hle_thread.c 的 0x1001..0x1fff 不重叠 | session handle = 0x8000 + index, disjoint from hle_thread.c's 0x1001..0x1fff
 #define B3_SESS_MAX 256
 #define B3_OBJ_MAX 64          // 每个域的对象数上限 | object limit per domain
@@ -155,7 +157,7 @@ int b3_ipc_handle(uint32_t sh, uint32_t *msg, int lenient) {
     if (!s) return -2;
     b3_hipc_t h;
     if (b3_hipc_parse(msg, &h)) { LOG("B3-IPC service=%s malformed header %#x %#x", s->name, msg[0], msg[1]); return -1; }
-    if (h.type == 2) { LOG("B3-IPC service=%s proto=close cmd=0 handled=1 result=0", s->name); b3_object_closed(s->name); sess_free(s); return 1; }
+    if (h.type == 2) { if (b3_diag()) LOG("B3-IPC service=%s proto=close cmd=0 handled=1 result=0", s->name); b3_object_closed(s->name); sess_free(s); return 1; }
     int proto; uint32_t cmd, obj_id = 0; const char *oname = s->name; b3_call_t c; memset(&c, 0, sizeof c); c.h = &h;
     if (h.type >= 16) { proto = B3_TIPC; cmd = h.type - 16; c.in = msg + h.data; c.n_in = h.n_data; }
     else if (h.type == 4 || h.type == 5 || h.type == 6 || h.type == 7) {
@@ -166,7 +168,7 @@ int b3_ipc_handle(uint32_t sh, uint32_t *msg, int lenient) {
             if (obj_id >= B3_OBJ_MAX || !s->dom->obj[obj_id].used) { LOG("B3-IPC service=%s bad domain object %u", s->name, obj_id); return -1; }
             oname = s->dom->obj[obj_id].name;
             if (dtype == 2) {   // 关闭域内对象 | close a domain object
-                LOG("B3-IPC service=%s proto=close cmd=0 handled=1 result=0", oname); b3_object_closed(oname); s->dom->obj[obj_id].used = 0;
+                if (b3_diag()) LOG("B3-IPC service=%s proto=close cmd=0 handled=1 result=0", oname); b3_object_closed(oname); s->dom->obj[obj_id].used = 0;
                 respond(msg, B3_CMIF, 1, 0, NULL, 0, NULL, 0, NULL, 0, NULL, 0); return 0;
             }
             unsigned n_in_obj = (msg[d] >> 8) & 0xff, data_size = msg[d] >> 16;   // 入对象号接在数据载荷后 | in-object ids follow the data payload
@@ -188,7 +190,7 @@ int b3_ipc_handle(uint32_t sh, uint32_t *msg, int lenient) {
     if (proto == B3_CONTROL && cmd == 0) {
         if (!s->dom) { s->dom = calloc(1, sizeof *s->dom); s->dom->refs = 1; obj_new(s, s->name); }
         uint32_t one = 1;
-        LOG("B3-IPC service=%s proto=control cmd=0 handled=1 result=0 words=%u args=[%s]", s->name, c.n_in, args);
+        if (b3_diag()) LOG("B3-IPC service=%s proto=control cmd=0 handled=1 result=0 words=%u args=[%s]", s->name, c.n_in, args);
         respond(msg, B3_CONTROL, 0, 0, &one, 1, NULL, 0, NULL, 0, NULL, 0); return 0;
     }
     const b3_cmd_t *e = NULL;
@@ -217,7 +219,7 @@ int b3_ipc_handle(uint32_t sh, uint32_t *msg, int lenient) {
     { static struct { uint32_t hash, n; } seen[1024]; uint32_t hh = cmd * 2654435761u; for (const char *q = base; *q; q++) hh = hh * 31 + (uint8_t)*q;
       unsigned slot = hh % 1024; if (seen[slot].hash != hh) { seen[slot].hash = hh; seen[slot].n = 0; }
       uint32_t k = ++seen[slot].n;
-      if (k <= 32 || k % 4096 == 0)
+      if ((r || b3_diag()) && (k <= 32 || k % 4096 == 0))   // 成功的调用只在诊断时记 | successful calls are logged only when diagnosing
           LOG("B3-IPC service=%s proto=%s cmd=%u handled=1 result=%#x words=%u args=[%s]%s%s%s", oname, proto_name(proto), cmd, r, c.n_in, args, c.obj[0] ? " object=" : "", c.obj, k > 32 ? " (repeated)" : ""); }
     respond(msg, proto, domain, r, c.out, c.n_out, hnd ? &hnd : NULL, hnd ? 1 : 0, oid ? &oid : NULL, oid ? 1 : 0, c.copy, c.n_copy);
     return 0;
@@ -251,7 +253,7 @@ int b3_ipc_svc(int num, uint64_t *regs) {
     case 0x16: {   // CloseHandle：只接管会话句柄 | CloseHandle: only session handles are taken over
         pthread_mutex_lock(&g_ipc_lock);
         b3_sess_t *s = sess_get((uint32_t)regs[0]);
-        if (s) { LOG("B3-IPC service=%s proto=close cmd=0 handled=1 result=0", s->name); b3_object_closed(s->name); sess_free(s); }
+        if (s) { if (b3_diag()) LOG("B3-IPC service=%s proto=close cmd=0 handled=1 result=0", s->name); b3_object_closed(s->name); sess_free(s); }
         pthread_mutex_unlock(&g_ipc_lock);
         int b3_shmem_close(uint32_t);
         int b3_tmem_close(uint32_t);

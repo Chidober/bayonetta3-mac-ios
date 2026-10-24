@@ -21,6 +21,7 @@
 #include "../../host/hle.h"
 #include "nvn_protos.h"
 #include "nvn_count.h"
+static int b3_diag(void) { static int on = -1; if (on < 0) { const char *e = getenv("B3_DIAG_LOG"); on = e && *e == '1'; } return on; }   // B3_DIAG_LOG=1：逐条诊断日志（缺省关）| B3_DIAG_LOG=1: per-call diagnostic logs (off by default)
 #include "nvn_tex.h"
 #include "nvn_mtl.h"
 #include "nvn_pace.h"
@@ -116,7 +117,7 @@ static void *nvn_lookup(const char *name) {
     for (unsigned i = 0; i < NVN_NFUNC; i++)
 #ifdef DM_B3
         if (!strcmp(nvn_names[i], name)) {
-            static uint8_t b3_seen[NVN_NFUNC]; if (!b3_seen[i]++) LOG("B3-NVN-LOOKUP name=%s", name);   // B3 实际查的名字（每个一次）| names B3 actually looks up (once each)
+            static uint8_t b3_seen[NVN_NFUNC]; if (!b3_seen[i]++ && b3_diag()) LOG("B3-NVN-LOOKUP name=%s", name);   // B3 实际查的名字（每个一次）| names B3 actually looks up (once each)
             return nvn_thunk[i];
         }
 #else
@@ -345,7 +346,7 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     o->serial = nvn_new_serial();
 #ifdef DM_B3
     o->serial = b3_tex_alias(o);
-    if (o->has_layout && (o->layout[1] || o->layout[2] || o->layout[3])) { static int n; if (n++ < 60) LOG("B3-PKGLAYOUT ser=%llu %ux%ux%u lv%u fmt=%#x tgt=%d layout=%02x%02x%02x%02x%02x%02x%02x%02x size=%#llx", (unsigned long long)o->serial, o->d.width, o->d.height, o->d.depth, o->d.levels, o->d.format, o->d.target,
+    if (o->has_layout && (o->layout[1] || o->layout[2] || o->layout[3])) { static int n; if (b3_diag() && n++ < 60) LOG("B3-PKGLAYOUT ser=%llu %ux%ux%u lv%u fmt=%#x tgt=%d layout=%02x%02x%02x%02x%02x%02x%02x%02x size=%#llx", (unsigned long long)o->serial, o->d.width, o->d.height, o->d.depth, o->d.levels, o->d.format, o->d.target,
           o->layout[0], o->layout[1], o->layout[2], o->layout[3], o->layout[4], o->layout[5], o->layout[6], o->layout[7], (unsigned long long)o->L.size); }   // 诊断：第 1–3 字节非 0 的布局 | diagnostic: layouts with bytes 1–3 non-zero
 #endif
     OLOG("Texture %p %ux%ux%u lv%u fmt=%#x tgt=%d flags=%#x size=%#llx", (void *)t, o->d.width, o->d.height, o->d.depth,

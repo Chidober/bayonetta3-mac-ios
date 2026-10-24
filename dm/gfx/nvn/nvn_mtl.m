@@ -2333,7 +2333,7 @@ static void shmap_load(void) {
 @implementation NvProg @end
 // 预热项：后台建好、等提交线程领用。vs / fs 强引用（pso 里只是裸指针，后台字典随任务结束释放）
 // Warm-up entry: built in the background, waiting to be taken by the submit thread. vs / fs are strong references (in pso they are only raw pointers, and the background dictionary is released when the task ends)
-@interface WarmItem : NSObject { @public int kind; NSString *key, *vs_key, *fs_key; NvShader *shader, *vs, *fs; pso_key pso; id<MTLFunction> fsfn; id object; } @end
+@interface WarmItem : NSObject { @public int kind; NSString *key, *vs_key, *fs_key; NvShader *shader, *vs, *fs; pso_key pso; id<MTLFunction> fsfn; id object; pso_fz_desc fz; } @end
 @implementation WarmItem @end
 static NSMutableDictionary<NSString *, NvShader *> *g_shcache;
 
@@ -3162,11 +3162,21 @@ static id<MTLRenderPipelineState> pso_pend_take(const pso_key *k) {   // 提交�
 // B3 alpha 测试：当前颜色状态的 alpha 函数不是 ALWAYS 时，取片元着色器 <entry>_b3at 按（函数, 参考值）特化的版本；参考值取最近一次 SetAlphaRef（dm/b3/b3_nvn.c，HYPOTHESIS：录制时的全局值）
 // B3 alpha test : when the current colour state's alpha function is not ALWAYS, take the fragment shader's <entry>_b3at specialized by (func, ref); the reference is the latest SetAlphaRef (dm/b3/b3_nvn.c, HYPOTHESIS: a global value at record time)
 extern float g_b3_alpha_ref;
+static id<MTLFunction> b3_at_fn_for(NvShader *fs, int f, float ref);
+static id<MTLFunction> b3_eq_fn_for(NvShader *fs, float tol) {   // 深度相等容差版本（函数常量 202）| depth-EQUAL tolerance version (function constant 202)
+    if (!fs->b3eqfn) { MTLFunctionConstantValues *cv = [MTLFunctionConstantValues new]; [cv setConstantValue:&tol type:MTLDataTypeFloat atIndex:202]; NSError *e = nil; fs->b3eqfn = [fs->b3lib newFunctionWithName:fs->b3eq constantValues:cv error:&e]; }
+    return fs->b3eqfn;
+}
+static float g_b3_eq_tol = -1;
 static id<MTLFunction> b3_at_fn(NvShader *fs) {
     int f = (int)S.color.alpha_func;
     { static int off = -1; if (off < 0) { const char *e = getenv("B3_NO_AT"); off = e && *e == '1'; } if (off) return nil; }   // 诊断：关掉 alpha 测试| diagnostic: alpha test off 
     if (!fs || !fs->b3at || !f || f == NVN_ALPHA_FUNC_ALWAYS) return nil;
-    float ref = g_b3_alpha_ref; NSString *ck = [NSString stringWithFormat:@"%d:%a", f, ref];
+    return b3_at_fn_for(fs, f, g_b3_alpha_ref);
+}
+// 按（函数, 参考值）取特化版本（缓存在片元着色器上）；预热线程对自己的着色器对象也调它 | the version specialized by (func, ref), cached on the fragment shader; the warm-up thread also calls it on its own shader objects
+static id<MTLFunction> b3_at_fn_for(NvShader *fs, int f, float ref) {
+    NSString *ck = [NSString stringWithFormat:@"%d:%a", f, ref];
     if (!fs->b3atfn) fs->b3atfn = [NSMutableDictionary dictionary];
     id<MTLFunction> fn = fs->b3atfn[ck];
     if (fn) return fn;
@@ -3185,9 +3195,8 @@ static __unsafe_unretained id<MTLRenderPipelineState> pso_get(NvProg *pr, MTLRen
 #ifdef DM_B3
     id<MTLFunction> b3fn = g_pso_lmap ? nil : b3_at_fn(fs); if (b3fn) k.fsfn = (__bridge void *)b3fn;   // B3：alpha 测试版本进管线键 | B3: the alpha test variant goes into the pipeline key
     if (!b3fn && !g_pso_lmap && g_b3_eq_draw && fs && fs->b3eq) {   // 深度相等容差版本，容差按函数常量 202 特化（B3_EQ_TOL_V 改）| depth-EQUAL tolerance version, tolerance specialized through function constant 202 (B3_EQ_TOL_V changes it)
-        static float tol = -1; if (tol < 0) { const char *e = getenv("B3_EQ_TOL_V"); tol = e ? (float)atof(e) : 16.0f / 16777216.0f;   /* 缺省 16 个 24 位深度间距（用户定的口径）| default 16 steps of 24-bit depth (the user's rule) */ MLOG("B3-EQTOL 容差 %g | tolerance %g", tol, tol); }
-        if (!fs->b3eqfn) { MTLFunctionConstantValues *cv = [MTLFunctionConstantValues new]; [cv setConstantValue:&tol type:MTLDataTypeFloat atIndex:202]; NSError *e = nil; fs->b3eqfn = [fs->b3lib newFunctionWithName:fs->b3eq constantValues:cv error:&e]; }
-        b3fn = fs->b3eqfn; if (b3fn) k.fsfn = (__bridge void *)b3fn; }
+        float tol = g_b3_eq_tol; if (tol < 0) { const char *e = getenv("B3_EQ_TOL_V"); g_b3_eq_tol = tol = e ? (float)atof(e) : 16.0f / 16777216.0f;   /* 缺省 16 个 24 位深度间距（用户定的口径）| default 16 steps of 24-bit depth (the user's rule) */ MLOG("B3-EQTOL 容差 %g | tolerance %g", tol, tol); }
+        b3fn = b3_eq_fn_for(fs, tol); if (b3fn) k.fsfn = (__bridge void *)b3fn; }
     // 没用上容差版片元（合并通道 g_pso_lmap、alpha 测试、特化失败）就不放宽深度测试：只有"小于等于"没有近侧界限会把剪纸卡片 / 特效面片整块画出（第 5 章大斜板）
     // Without the tolerance fragment version (merged pass g_pso_lmap, alpha test, failed specialization) do not relax the depth test: LEQUAL without the near bound draws cut-out cards / effect quads whole (chapter 5 slabs)
     if (g_b3_eq_draw && (!fs || !fs->b3eqfn || k.fsfn != (__bridge void *)fs->b3eqfn)) { g_b3_eq_draw = 0; g_dss_dirty = 1;
@@ -3214,7 +3223,18 @@ static __unsafe_unretained id<MTLRenderPipelineState> pso_get(NvProg *pr, MTLRen
 #else
     if (!ps) { MLOG("【红】建渲染管线失败：%s", e.localizedDescription.UTF8String); return nil; }
 #endif
+#ifdef DM_B3
+    // 普通通道上的特化片元（alpha 测试 / 深度相等容差）记下种类与特化常量，预热时照样重建（种类 2 / 3；1 是合并通道的可读 tile 版本）
+    // specialized fragments on normal passes (alpha test / depth-EQUAL tolerance) record their kind and constants so warm-up can rebuild them (kinds 2 / 3; 1 is the merged-pass readable-tile version)
+    pso_fz_desc b3fz; memset(&b3fz, 0, sizeof b3fz);
+    if (!g_pso_lmap && k.fsfn && fs) {
+        if ((__bridge void *)fs->b3eqfn == k.fsfn) { b3fz.kind = 3; memcpy(b3fz.fx, &g_b3_eq_tol, 4); }
+        else { int f = (int)S.color.alpha_func; float ref = g_b3_alpha_ref; b3fz.kind = 2; b3fz.fx[0] = (int8_t)f; memcpy(b3fz.fx + 4, &ref, 4); }
+    }
+    pso_skey sk; char shex[sizeof sk * 2 + 1]; pso_skey_from(&k, vs, fs, g_pso_lmap != NULL, g_pso_lmap ? &g_pso_fz : b3fz.kind ? &b3fz : NULL, &sk); pso_skey_hex(&sk, shex);
+#else
     pso_skey sk; char shex[sizeof sk * 2 + 1]; pso_skey_from(&k, vs, fs, g_pso_lmap != NULL, g_pso_lmap ? &g_pso_fz : NULL, &sk); pso_skey_hex(&sk, shex);
+#endif
     pso_record("R\t%s\n", shex);
     pso_user_record("R\t%s\n", shex);
     hm_put_id(&g_pso, &k, ps);
@@ -3261,12 +3281,16 @@ static void warm_worker(NSArray<NSString *> *paths) {
                     id<MTLFunction> fsfn = nil;
                     if (sk.fz) {
                         if (sk.fz_desc.kind == 1 && fs) { int fx[32]; for (int i = 0; i < 32; i++) fx[i] = sk.fz_desc.fx[i]; fsfn = bf_fn(fs, fx, sk.fz_desc.fbmask, sk.k.lmap); }
+#ifdef DM_B3
+                        else if (sk.fz_desc.kind == 2 && fs && fs->b3at) { float ref; memcpy(&ref, sk.fz_desc.fx + 4, 4); fsfn = b3_at_fn_for(fs, sk.fz_desc.fx[0], ref); }
+                        else if (sk.fz_desc.kind == 3 && fs && fs->b3eq) { float tol; memcpy(&tol, sk.fz_desc.fx, 4); fsfn = b3_eq_fn_for(fs, tol); }
+#endif
                                                 if (!fsfn) { g_warm_skip_fz++; continue; }
                     }
                     pso_key k = sk.k; k.vs = (__bridge void *)vs; k.fs = (__bridge void *)fs; k.fsfn = (__bridge void *)fsfn;
                     NSError *e = nil; id ps = [g_dev newRenderPipelineStateWithDescriptor:pso_desc(&k, vs, fs, fsfn, sk.merged) error:&e];
                     if (!ps) { MLOG("【红】后台建渲染管线失败：%s", e.localizedDescription.UTF8String); continue; }
-                    WarmItem *item = [WarmItem new]; item->kind = 1; item->vs_key = vkey; item->fs_key = fkey; item->vs = vs; item->fs = fs; item->fsfn = fsfn; item->pso = k; item->object = ps;
+                    WarmItem *item = [WarmItem new]; item->kind = 1; item->vs_key = vkey; item->fs_key = fkey; item->vs = vs; item->fs = fs; item->fsfn = fsfn; item->pso = k; item->object = ps; item->fz = sk.fz_desc;
                     warm_enqueue(item); g_warm_rps++;
                 } else if ([c[0] isEqualToString:@"C"] && c.count >= 2) {
                     NSString *key = c[1]; if (!key.length) continue;
@@ -3658,6 +3682,9 @@ static const uint8_t *g_exec_next;   // 回放中当前绘制的下一条操作 
 uint64_t g_b3_skip[4];   // draw 的放弃原因计数：0 没绑程序、1 通道没开成（渲染目标建不出）、2 管线建不出（缺着色器等）| draw bail-out counts: 0 no program, 1 render pass not opened (targets not created), 2 pipeline not created (missing shaders etc.)
 static void b3_vp_extent(double *w, double *h) { if (S.has_vp) { *w = S.vp[0][0] + S.vp[0][2]; *h = S.vp[0][1] + S.vp[0][3]; } }   // 视口右下角 | viewport bottom-right corner
 static void b3_fact_draw(void) {
+    // 只有 Mac 上的着色器出包读这些行（./b3 shaders）；iPhone 缺省不记，省日志和每次绘制的查重开销。B3_FACTS=0 / 1 改
+    // only the Mac shader build (./b3 shaders) reads these lines; iPhone skips them by default, saving log volume and the per-draw dedup cost. B3_FACTS=0 / 1 overrides
+    static int on = -1; if (on < 0) { const char *e = getenv("B3_FACTS"); on = e && *e ? *e == '1' : !TARGET_OS_IPHONE; } if (!on) return;
     const prog_t *pg = S.prog; if (!pg || !pg->serial) return;
     enum { NSEEN = 1 << 22 }; static uint64_t *seen; if (!seen) seen = calloc(NSEEN, sizeof *seen);   // 4M 项（32 MB）：进 3D 后 64K 项会满 | 4M entries (32 MB): 64K filled up once reached 3D
     { static uint64_t last; if (pg->serial != last) { last = pg->serial;   // 程序序号 → 各阶段键（合成程序的序号不在导出映射表里，出包脚本靠这行对上键）| program serial → per-stage keys (composite serials are not in the dump map; the build script matches keys through this line)
@@ -5661,6 +5688,15 @@ static void warm_claim(void) {
             if (!vs) { vs = item->vs; g_shcache[item->vs_key] = vs; }
             if (item->fs_key.length && !fs) { fs = item->fs; g_shcache[item->fs_key] = fs; }
             item->pso.vs = (__bridge void *)vs; item->pso.fs = (__bridge void *)fs;
+#ifdef DM_B3
+            // 特化片元缓存在片元着色器对象上：着色器已被提交线程先载入时，管线键要用它那份函数（没有就把预热建的放进去），否则查不中
+            // specialized fragments are cached on the fragment shader object: if the submit thread already loaded the shader, the pipeline key must use its function (or adopt the warmed one), otherwise lookups miss
+            if (fs && fs != item->fs && item->fsfn) {
+                if (item->fz.kind == 2) { float ref; memcpy(&ref, item->fz.fx + 4, 4); NSString *ck = [NSString stringWithFormat:@"%d:%a", (int)item->fz.fx[0], ref];
+                    if (!fs->b3atfn) fs->b3atfn = [NSMutableDictionary dictionary]; if (!fs->b3atfn[ck]) fs->b3atfn[ck] = item->fsfn; item->pso.fsfn = (__bridge void *)fs->b3atfn[ck]; }
+                else if (item->fz.kind == 3) { if (!fs->b3eqfn) fs->b3eqfn = item->fsfn; item->pso.fsfn = (__bridge void *)fs->b3eqfn; }
+            }
+#endif
             if (!hm_get_id(&g_pso, &item->pso)) { hm_put_id(&g_pso, &item->pso, item->object); g_warm_claim_rps++; }
         } else {
             NvShader *cs = g_shcache[item->key];

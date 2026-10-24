@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include "dm.h"
 #include <sys/stat.h>
+static int b3_diag(void) { static int on = -1; if (on < 0) { const char *e = getenv("B3_DIAG_LOG"); on = e && *e == '1'; } return on; }   // B3_DIAG_LOG=1：逐条诊断日志（缺省关）| B3_DIAG_LOG=1: per-call diagnostic logs (off by default)
 #include "../gfx/nvn/nvn_protos.h"
 #include "../gfx/nvn/nvn_obj.h"
 
@@ -235,7 +236,7 @@ void b3_nvn_shader_note(const NVNshaderData *sd, int n, uint64_t serial) {
                 if (sd[i].data && c1len && c1len <= 0x10000 && c1off <= 0x100000 && (fp = fopen(path, "wb"))) { fwrite((const uint8_t *)(uintptr_t)sd[i].data + c1off, 1, c1len, fp); fclose(fp); } }
               snprintf(path, sizeof path, "%s/%016llx.code", dd, (unsigned long long)__builtin_bswap64(key)); if (sd[i].data && code_len && code_len <= 0x100000 && (fp = fopen(path, "wb"))) { fwrite((const void *)(uintptr_t)sd[i].data, 1, code_len + 0x40, fp); fclose(fp); } } }
         int64_t gap = (int64_t)((uint64_t)(uintptr_t)sd[i].control - (uint64_t)sd[i].data);   // 控制段相对代码起点的距离（同一记录里紧邻时 = 代码区长）| distance from the code start to the control section (= code area length when they are adjacent in one record)
-        LOG("B3-NVN-SHADER prog=%llu slot=%d n=%d ctl=%016llx gap=%lld head=[%08x %08x %08x %08x %08x %08x %08x %08x]", (unsigned long long)serial, i, n,
+        if (b3_diag()) LOG("B3-NVN-SHADER prog=%llu slot=%d n=%d ctl=%016llx gap=%lld head=[%08x %08x %08x %08x %08x %08x %08x %08x]", (unsigned long long)serial, i, n,
             (unsigned long long)__builtin_bswap64(key), (long long)gap, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
     }
 }
