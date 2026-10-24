@@ -49,11 +49,11 @@ static uint8_t *g_hid;
 static uint64_t g_sampling;
 static void push_now(void);
 // ---------- 输入录制 / 回放（性能基准用）----------
-// B3_INPUT_REC=<文件>：前端输入每变一次记一行「读取段 帧 按键 lx ly rx ry」；帧 = 该段读取画面结束后出图的第几帧。
-// B3_INPUT_PLAY=<文件>：忽略前端输入，按同样的“段 + 帧”放回；放完记 B3-REPLAY-END，B3_REPLAY_EXIT=1 时再过 120 帧退出。
+// B3_INPUT_REC=<文件>：前端输入每变一次记一行「阶段 帧 按键 lx ly rx ry」；阶段 = 游戏改出图间隔的次数（读取 / 过场 / 菜单的切换），帧 = 本阶段内出图的第几帧。
+// B3_INPUT_PLAY=<文件>：忽略前端输入，按同样的“阶段 + 帧”放回；某条等了 30 秒还没到就记 B3-REPLAY-DESYNC 并跳过去；放完记 B3-REPLAY-END，B3_REPLAY_EXIT=1 时再过 120 帧退出。
 // ---------- Input record / replay (for benchmarks) ----------
-// B3_INPUT_REC=<file>: one line "epoch frame buttons lx ly rx ry" per front-end input change; frame = presents since that epoch's loading screen ended.
-// B3_INPUT_PLAY=<file>: ignore front-end input and play the lines back by the same "epoch + frame"; when done log B3-REPLAY-END, and with B3_REPLAY_EXIT=1 exit 120 frames later.
+// B3_INPUT_REC=<file>: one line "phase frame buttons lx ly rx ry" per front-end input change; phase = number of present-interval changes so far (loading / cutscene / menu switches), frame = presents within that phase.
+// B3_INPUT_PLAY=<file>: ignore front-end input and play the lines back by the same "phase + frame"; an entry still not reached after 30 s logs B3-REPLAY-DESYNC and is applied anyway; when done log B3-REPLAY-END, and with B3_REPLAY_EXIT=1 exit 120 frames later.
 __attribute__((weak)) _Atomic uint32_t g_b3_load_epoch;   // hle_nvn.c；单测程序里没有 | hle_nvn.c; absent in test programs
 __attribute__((weak)) _Atomic uint64_t g_b3_frame_now;    // b3_nvn.c
 static int g_replaying;
@@ -209,7 +209,9 @@ static void *replay_thread(void *arg) {
     FILE *fp = fopen((const char *)arg, "r"); if (!fp) die("B3_INPUT_PLAY 打不开 %s | cannot open", (const char *)arg);
     unsigned e; unsigned long long f, b; int s0, s1, s2, s3, n = 0;
     while (fscanf(fp, "%u\t%llu\t%llx\t%d\t%d\t%d\t%d", &e, &f, &b, &s0, &s1, &s2, &s3) == 7) {
-        for (;;) { uint32_t ce; uint64_t cf = epoch_frame(&ce); if (ce > e || (ce == e && cf >= f)) break; usleep(1000); }
+        for (int waited = 0;; waited++) { uint32_t ce; uint64_t cf = epoch_frame(&ce); if (ce > e || (ce == e && cf >= f)) break;
+            if (waited == 30000) { static int nd; if (nd++ < 20) LOG("B3-REPLAY-DESYNC 第 %d 条等不到（要阶段 %u 帧 %llu，现在阶段 %u 帧 %llu），跳过等待 | entry not reached, applying anyway", n, e, f, ce, (unsigned long long)cf); break; }
+            usleep(1000); }
         atomic_store(&g_buttons, b); atomic_store(&g_stick[0], s0); atomic_store(&g_stick[1], s1); atomic_store(&g_stick[2], s2); atomic_store(&g_stick[3], s3);
         push_now(); n++;
     }
