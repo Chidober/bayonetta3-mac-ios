@@ -5455,7 +5455,18 @@ frz_plain:;
     switch (prim) {
         case 0: mp = MTLPrimitiveTypePoint; break; case 1: mp = MTLPrimitiveTypeLine; break; case 3: mp = MTLPrimitiveTypeLineStrip; break;
         case 4: case 7: mp = MTLPrimitiveTypeTriangle; break; case 5: mp = MTLPrimitiveTypeTriangleStrip; break;
-        default: RED_ONCE(19, "图元类型 %d 未实现", prim); return;
+        default: RED_ONCE(19, "图元类型 %d 未实现", prim);
+#ifdef DM_B3
+            // B3_TESS_LOG=<目录>（诊断）：曲面细分面片（图元 14）画不了时，记下前 40 次的着色器、顶点数与片元阶段贴图，并把这些贴图存进目录，用来判断缺的是什么物体
+            // B3_TESS_LOG=<dir> (diagnostic): when tessellation patches (primitive 14) cannot be drawn, log the first 40 draws' shaders, vertex count and fragment-stage textures, and save those textures into the dir to tell which objects are missing
+            { static const char *dir = (const char *)1; if (dir == (const char *)1) dir = getenv("B3_TESS_LOG"); static int n;
+              if (dir && prim == 14 && n < 40) { n++; char tl[512]; size_t o = 0; tl[0] = 0;
+                  for (int k = 0; k < 16 && o < sizeof tl - 32; k++) { uint64_t ser = h_ser(S.tex[4][k]); if (!ser) continue; o += snprintf(tl + o, sizeof tl - o, " t%d=%llu", k, (unsigned long long)ser);
+                      char pth[1200]; snprintf(pth, sizeof pth, "%s/tess_tex_%llu", dir, (unsigned long long)ser); b3_dump_tex_serial(ser, pth); }
+                  __unsafe_unretained NvShader *v0 = pr ? pr->sh[0] : nil, *f0 = pr ? pr->sh[1] : nil;
+                  MLOG("B3-TESS 帧 %llu 面片绘制 %u 个顶点 vs=%s fs=%s 目标 %ux%u%s | patch draw", (unsigned long long)atomic_load(&g_cur_frame), dw ? dw->count : di->count, v0 ? v0->key : "-", f0 ? f0->key : "-", (unsigned)g_el_w, (unsigned)g_el_h, tl); } }
+#endif
+            return;
     }
 #ifdef DM_B3
     // 编码本次绘制的过程中通道被结束了（例：绑定贴图时就地升级成可换格式视图要 blit，blit 调 rp_end）：en 已结束，在它上面画会在驱动里段错误（VERIFIED）。
