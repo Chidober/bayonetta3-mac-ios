@@ -36,6 +36,7 @@ int main(int argc, char **argv) {
         #define DOC(name, sub) setenv(name, [doc stringByAppendingPathComponent:sub].fileSystemRepresentation, 0)
         DOC("B3_INPUT", @"input"); DOC("B3_SAVE_DIR", @"save"); DOC("B3_SHADER_LIB", @"shader_cache"); DOC("B3_SHADER_MAP", @"shader_map.tsv");
         setenv("DM_B3_LENIENT", "1", 0); setenv("B3_WINDOW", "1", 0);
+        if ([NSUserDefaults.standardUserDefaults boolForKey:@"b3_docked"]) setenv("B3_DOCKED", "1", 0);   // 高画质：iOS 设置 App 里 B3 页面的开关（Settings.bundle），开 = 底座模式 1600×900；devicectl 传的 B3_DOCKED 优先 | high quality: the switch on the B3 page of the iOS Settings app (Settings.bundle); on = docked mode 1600×900; B3_DOCKED passed by devicectl takes precedence
         DOC("DM_PSO_USER", @"pso_user.tsv");   // 管线预热清单：玩过的场景下次启动在后台先建好 | pipeline warm-up list: scenes played before are prebuilt in the background on the next launch
         set_program_id(getenv("B3_INPUT"));
         // B3_BENCH=1（./b3 bench --ios 启动时传）：用 Documents/bench/save0 的新副本当存档，回放 Documents/bench/input.tsv，放完自动退出 | B3_BENCH=1 (passed by ./b3 bench --ios): use a fresh copy of Documents/bench/save0 as the save, replay Documents/bench/input.tsv, exit when done

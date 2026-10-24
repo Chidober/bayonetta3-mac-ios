@@ -178,6 +178,10 @@ Free-account signing expires after 7 days: just run `./b3 ios` again (game data 
 - **Touch (menu mode):** tap **menu** at the top to switch. A tap = confirm (A), swipes up / down / left / right = D-pad, plus B (back), L / R / ZL / ZR and +; tap 👊 to return to combat mode.
 - The game itself does not support touch, so the menu "taps" are converted into button presses.
 
+### iPhone picture quality
+
+The iPhone uses handheld mode by default: the game outputs 1280×720 and MetalFX upscales it to the screen. For a sharper picture open the **Settings** app → **B3** and turn on **High quality** (docked mode, 1600×900); it needs more GPU and the phone heats up sooner. Takes effect the next time the game starts.
+
 ## 6. Known issues
 
 - **Occasional minor graphics glitches early on, improving as you play.** Some shaders compile most accurately only when the vertex and texture formats the game actually uses at run time are known; that information can only be gathered from the logs while you play and cannot ship with the repository. This is handled automatically: after every 3 sessions, the next launch does an incremental shader cache rebuild with the new information (about 2 minutes, announced in the terminal); the iPhone build updates the next time you run `./b3 ios`. If you see an obvious graphics error, play a few more sessions and check again, or run `./b3 shaders` (add `--ios` for iPhone) to update right away.

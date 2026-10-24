@@ -33,6 +33,8 @@ targets:
       - path: Gen/boot
         type: folder
         buildPhase: resources
+      - path: $HERE/Settings.bundle
+        buildPhase: resources
     info:
       path: Gen/Info.plist
       properties:

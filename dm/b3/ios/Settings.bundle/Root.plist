@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PreferenceSpecifiers</key>
+	<array>
+		<dict>
+			<key>Type</key>
+			<string>PSToggleSwitchSpecifier</string>
+			<key>Title</key>
+			<string>高画质 High quality</string>
+			<key>Key</key>
+			<string>b3_docked</string>
+			<key>DefaultValue</key>
+			<false/>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+			<key>FooterText</key>
+			<string>开：底座模式，游戏输出 1600×900，画面更清楚，但 GPU 负担更大、更容易发热掉帧。关：掌机模式 1280×720。下次打开游戏时生效（正在运行的话先从后台划掉）。
+On: docked mode, the game outputs 1600×900 for a sharper picture, with more GPU load and more heat. Off: handheld mode, 1280×720. Takes effect the next time the game starts (close it from the app switcher first if it is running).</string>
+		</dict>
+	</array>
+</dict>
+</plist>
